@@ -1,0 +1,224 @@
+{
+  "message_id": "06_scan_handwritten_safety",
+  "category": "Safety Report (ICSR)",
+  "confidenceScore": 0.87,
+  "classificationReason": "Patient safety signal and adverse-event language were found in the message or attachment.",
+  "aiSummary": "This message concerns Safety Report (ICSR) and appears relevant for pharmacovigilance review. The subject '06_scan_handwritten_safety' is consistent with a healthcare intake item that requires triage. The email body states that the content should be reviewed for product, patient, and outcome context before final sign-off. The narrative indicates whether the issue reflects an adverse-event signal, a product defect, or an information request. A human reviewer should confirm the exact patient, reporter, product, and outcome details before any case disposition is finalized. The communication should be checked for missing or ambiguous facts such as dose timing, seriousness, and lot or batch information. The document flow prioritizes traceability, so each summary point should be linked back to the original email or attached document content. If an attachment is present, the reviewer should inspect page-level context for the exact source of the relevant facts. If the content indicates a product quality issue, the report should be reviewed for packaging damage, contamination, or incorrect product state. If the content indicates safety concern, the review should confirm adverse-event reporting criteria and any clinical outcome that ultimately occurred. If the content resembles a published case report or article, literature screening should be completed before submission or closure. This summary intentionally preserves uncertainty when the document does not state a fact explicitly, rather than guessing the patient or product details. The PDF or attachment adds supporting context and may require OCR review, translation, or literature screening depending on the document type.",
+  "language": "English",
+  "translatedText": "\nAttachment 1 (06_scan_handwritten_safety.pdf): [Page 1]\nScanned re port\nHandwritten mock form\nPatientage 34\nDrug DemoCure\n Reaction rash\n",
+  "pdfTypes": [
+    "Scanned / OCR required"
+  ],
+  "imageNotes": [
+    "06_scan_handwritten_safety.pdf, page 1, image 1: embedded portrait image (1200x1600px) detected; visual description: visual model unavailable; inspect the original image manually; human review required.",
+    "Attachment 1 (06_scan_handwritten_safety.pdf): scanned or handwritten document detected; OCR review and manual verification required.",
+    "Attachment 1 (06_scan_handwritten_safety.pdf): image likely shows product damage or patient skin finding; requires human review."
+  ],
+  "tables": [
+    "No table detected in the provided attachment(s)."
+  ],
+  "literatureScreening": {
+    "isLiteratureLike": false,
+    "screeningStatus": "Not applicable",
+    "signals": [],
+    "caseSummary": "No case details extracted from article-like text.",
+    "cases": [],
+    "recommendation": "No article-like document detected."
+  },
+  "ocrConfidence": {
+    "required": true,
+    "confidence": 0.55,
+    "handwritingConfidence": 0.35,
+    "documents": [
+      {
+        "required": true,
+        "confidence": 0.55,
+        "handwritingConfidence": 0.35,
+        "method": "RapidOCR",
+        "pages": [
+          {
+            "page": 1,
+            "confidence": 0.55,
+            "handwritingConfidence": 0.35,
+            "textDetected": true
+          }
+        ],
+        "attachment": "06_scan_handwritten_safety.pdf"
+      }
+    ],
+    "method": "Per-page OCR engine confidence aggregated across scanned PDFs"
+  },
+  "sourceTrace": {
+    "email": "subject=06_scan_handwritten_safety; sender=synthetic.sender@example.invalid; body=Synthetic fixture message for assignment validation.",
+    "attachments": [
+      "Scanned / OCR required"
+    ],
+    "provenanceRule": "Every extracted fact is trace-linked to the message body or attachment text. PDF text includes [Page N] markers for page-level review.",
+    "attachmentSummaries": [
+      {
+        "attachment": "06_scan_handwritten_safety.pdf",
+        "summary": "06_scan_handwritten_safety.pdf was identified as a Scanned / OCR required. The document contains 1 page markers for reviewer navigation. Its provisional content classification is Safety Report (ICSR). The classification rationale is Patient safety signal and adverse-event language were found in the message or attachment. The reviewer should verify the original page context before accepting any extracted value. Facts absent from the document must remain Not stated rather than inferred. Evidence references preserve the PDF page where matched text was found. Any table or image result is presented as review support, not as an automatic clinical conclusion. If this is an article, only patient-level case information should be considered for reporting review. This document requires human sign-off before any final workflow decision is made.",
+        "pdfType": "Scanned / OCR required"
+      }
+    ],
+    "ocrAssessments": [
+      {
+        "required": true,
+        "confidence": 0.55,
+        "handwritingConfidence": 0.35,
+        "method": "RapidOCR",
+        "pages": [
+          {
+            "page": 1,
+            "confidence": 0.55,
+            "handwritingConfidence": 0.35,
+            "textDetected": true
+          }
+        ],
+        "attachment": "06_scan_handwritten_safety.pdf"
+      }
+    ]
+  },
+  "extractedFacts": [
+    {
+      "factGroup": "Product",
+      "fieldName": "Name",
+      "fieldValue": "Democure",
+      "confidence": 0.85,
+      "sourceReference": "PDF attachment, page 1, matched text: Democure"
+    },
+    {
+      "factGroup": "Narrative",
+      "fieldName": "Case Summary",
+      "fieldValue": "Attachment 1 (06_scan_handwritten_safety.pdf): [Page 1] Scanned re port Handwritten mock form Patientage 34 Drug DemoCure Reaction rash",
+      "confidence": 0.78,
+      "sourceReference": "Attachment text"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Initials",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Age",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Sex",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Weight",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Height",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Relevant History",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reporter",
+      "fieldName": "Role",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reporter",
+      "fieldName": "Country",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Dose",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Route",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Therapy Start",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Therapy Stop",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "What",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "Onset",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "Outcome",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Death",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Hospitalization",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Life-Threatening",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    }
+  ]
+}

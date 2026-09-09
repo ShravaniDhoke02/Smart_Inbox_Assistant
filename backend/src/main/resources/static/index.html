@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Inbox Assistant</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans antialiased h-screen flex overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col shadow-2xl z-10 hidden md:flex">
+        <div class="h-16 flex items-center px-6 border-b border-slate-800">
+            <span class="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                <svg class="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                Clinevo AI
+            </span>
+        </div>
+        <nav class="flex-1 overflow-y-auto py-4">
+            <ul class="space-y-1">
+                <li>
+                    <a href="#" id="queueNav" onclick="showQueue(); return false;" class="flex items-center px-6 py-3 text-indigo-400 bg-slate-800 border-r-4 border-indigo-500">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Review Queue
+                    </a>
+                </li>
+                <li>
+                    <a href="#" id="historyNav" onclick="showHistory(); return false;" class="flex items-center px-6 py-3 hover:text-white hover:bg-slate-800 transition-colors">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        History
+                    </a>
+                </li>
+            </ul>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50 relative">
+        <!-- Header -->
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-10">
+            <h1 class="text-xl font-semibold text-slate-800" id="headerTitle">Review Queue</h1>
+            <div class="flex items-center gap-4">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
+                    <span class="w-2 h-2 mr-2 bg-indigo-500 rounded-full animate-pulse"></span>
+                    AI Active
+                </span>
+            </div>
+        </header>
+
+        <!-- View: Queue List -->
+        <div id="queueView" class="flex-1 overflow-y-auto p-6 transition-all duration-300">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-lg font-medium text-slate-700">Needs Human Review</h2>
+                    <div class="flex gap-2 flex-wrap">
+                        <input id="pdfUploadInput" type="file" accept="application/pdf,.pdf" class="hidden" />
+                        <button id="uploadPdfButton" type="button" onclick="document.getElementById('pdfUploadInput').click()" aria-controls="pdfUploadInput" title="Choose a PDF file to add to the review queue" class="px-4 py-2 bg-emerald-600 border border-emerald-700 text-white rounded-lg shadow-sm text-sm font-semibold hover:bg-emerald-700 transition-colors">Upload PDF</button>
+                        <button type="button" onclick="seedDemoData()" class="px-4 py-2 bg-violet-600 border border-violet-700 text-white rounded-lg shadow-sm text-sm font-semibold hover:bg-violet-700 transition-colors">Load Synthetic Demo</button>
+                        <button type="button" onclick="showApproved()" class="px-4 py-2 bg-indigo-600 border border-indigo-700 text-white rounded-lg shadow-sm text-sm font-semibold hover:bg-indigo-700 transition-colors">Approved &amp; Saved</button>
+                        <button onclick="clearTestData()" class="px-4 py-2 bg-white border border-slate-300 rounded-lg shadow-sm text-sm font-medium hover:bg-slate-50 transition-colors">Clear Test Data</button>
+                        <button onclick="fetchMessages()" class="px-4 py-2 bg-white border border-slate-300 rounded-lg shadow-sm text-sm font-medium hover:bg-slate-50 transition-colors">Refresh</button>
+                    </div>
+                </div>
+                <section id="uploadProgressPanel" class="hidden mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4" role="status" aria-live="polite">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="min-w-0">
+                            <p id="uploadProgressTitle" class="text-sm font-semibold text-emerald-900">Uploading document</p>
+                            <p id="uploadProgressStatus" class="mt-1 truncate text-sm text-emerald-800">Preparing upload…</p>
+                        </div>
+                        <span id="uploadProgressPercent" class="shrink-0 text-sm font-semibold text-emerald-800">0%</span>
+                    </div>
+                    <div class="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100" aria-hidden="true">
+                        <div id="uploadProgressBar" class="h-full w-0 rounded-full bg-emerald-600 transition-all duration-200"></div>
+                    </div>
+                </section>
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Subject</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">AI Classification</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Confidence</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueTableBody" class="bg-white divide-y divide-slate-200">
+                            <!-- Rows injected by JS -->
+                        </tbody>
+                    </table>
+                    <div id="emptyState" class="hidden py-12 text-center text-slate-500">
+                        <svg class="mx-auto h-12 w-12 text-slate-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                        <p class="text-lg">No pending messages to review.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="historyView" class="hidden flex-1 overflow-y-auto p-6">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-lg font-medium text-slate-700">History</h2>
+                    <button onclick="showHistory()" class="px-4 py-2 bg-white border border-slate-300 rounded-lg shadow-sm text-sm font-medium hover:bg-slate-50">Refresh</button>
+                </div>
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-emerald-50"><tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Uploaded File</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Classification</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                            <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Action</th>
+                        </tr></thead>
+                        <tbody id="historyTableBody" class="bg-white divide-y divide-slate-200"></tbody>
+                    </table>
+                    <div id="historyEmptyState" class="hidden py-12 text-center text-slate-500"><p class="text-lg">No history records yet.</p></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="approvedView" class="hidden flex-1 overflow-y-auto p-6">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-lg font-medium text-slate-700">Approved &amp; Saved Records</h2>
+                    <button onclick="showApproved()" class="px-4 py-2 bg-white border border-slate-300 rounded-lg shadow-sm text-sm font-medium hover:bg-slate-50">Refresh</button>
+                </div>
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-emerald-50"><tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Uploaded File</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Classification</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Confidence</th>
+                            <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Action</th>
+                        </tr></thead>
+                        <tbody id="approvedTableBody" class="bg-white divide-y divide-slate-200"></tbody>
+                    </table>
+                    <div id="approvedEmptyState" class="hidden py-12 text-center text-slate-500"><p class="text-lg">No approved records yet.</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Review Document (Split Pane) -->
+        <div id="reviewView" class="hidden flex-1 flex h-full overflow-hidden">
+            <!-- Left Pane: Source Document -->
+            <div class="w-1/2 border-r border-slate-200 bg-slate-100 flex flex-col h-full overflow-hidden">
+                <div class="p-4 bg-white border-b border-slate-200 flex justify-between items-center">
+                    <button onclick="showQueue()" class="flex items-center text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                        Back to Queue
+                    </button>
+                    <span class="text-sm font-medium text-slate-500">Source Document</span>
+                </div>
+                <div class="flex-1 p-6 overflow-hidden">
+                    <div class="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                        <section id="docPdfViewerSection" class="hidden h-full flex flex-col" aria-label="PDF document viewer">
+                            <div class="mb-2 flex items-center justify-between gap-3">
+                                <h3 class="text-sm font-semibold text-slate-700">Document preview</h3>
+                                <a id="docPdfOpenLink" href="#" target="_blank" rel="noopener" class="text-sm font-medium text-indigo-600 hover:text-indigo-800">Open in new tab</a>
+                            </div>
+                            <iframe id="docPdfViewer" title="Uploaded PDF document" class="min-h-0 flex-1 w-full rounded-lg border border-slate-300 bg-slate-50" src="about:blank">
+                                Your browser cannot display PDFs. Use the “Open in new tab” link instead.
+                            </iframe>
+                        </section>
+                        <div id="docPdfUnavailable" class="hidden h-full place-items-center text-center text-slate-500">
+                            <p>No stored PDF is available for this record.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Pane: AI Extraction Form -->
+            <div class="w-1/2 bg-white flex flex-col h-full overflow-hidden">
+                <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                    <span class="text-sm font-medium text-slate-800 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-indigo-500 rounded-full"></span> AI Analysis
+                    </span>
+                    <div class="flex items-center gap-2">
+                    <button id="savedDataButton" onclick="showSavedRecord()" class="hidden px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium shadow hover:bg-emerald-700 transition-all">
+                        View Saved Data
+                    </button>
+                    <button id="approveButton" onclick="approveRecord()" class="px-5 py-2 bg-indigo-600 text-white rounded-lg font-medium shadow hover:bg-indigo-700 transition-all active:scale-95 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                        Approve & Save
+                    </button>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-6">
+                    <div id="savedRecordPanel" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-700 mb-3">Saved Record</h3>
+                        <div id="savedRecordContent" class="text-sm text-emerald-950 space-y-1"></div>
+                    </div>
+                    
+                    <!-- Classification Card -->
+                    <div class="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-5 mb-6 shadow-sm">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-indigo-800 uppercase tracking-wide mb-1">Classification</label>
+                                <input type="text" id="editCategory" class="text-lg font-bold text-slate-900 bg-transparent border-b border-indigo-300 focus:border-indigo-600 focus:outline-none w-full" value="Safety Report">
+                            </div>
+                            <div class="text-right">
+                                <label class="block text-xs text-indigo-600 uppercase tracking-wide">AI Confidence</label>
+                                <span id="lblConfidence" class="text-2xl font-bold text-indigo-700">95%</span>
+                            </div>
+                        </div>
+                        <p class="text-sm text-indigo-900/80 italic mb-2">Reasoning: <span id="lblReason">...</span></p>
+                        
+                        <div class="mt-4">
+                            <label class="block text-xs font-semibold text-indigo-800 uppercase tracking-wide mb-1">AI Summary</label>
+                            <textarea id="editSummary" class="w-full text-sm p-3 rounded-lg border-indigo-200 bg-white shadow-inner focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" rows="4"></textarea>
+                        </div>
+                    </div>
+
+                    <div id="reviewMeta" class="mb-6"></div>
+                    <div id="literatureSection" class="mb-6"></div>
+                    <div id="tableSection" class="mb-6"></div>
+                    <div id="imageSection" class="mb-6"></div>
+                    <div id="auditSection" class="mb-6"></div>
+
+                    <!-- Extracted Facts -->
+                    <div class="space-y-6">
+                        <h3 class="text-sm font-semibold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Extracted Facts</h3>
+                        <div id="factsContainer" class="space-y-4">
+                            <!-- Facts generated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

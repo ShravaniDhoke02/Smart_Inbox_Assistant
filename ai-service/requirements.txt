@@ -1,0 +1,11 @@
+Flask==3.0.2
+Werkzeug==3.0.1
+google-generativeai==0.4.0
+python-dotenv==1.1.0
+requests==2.31.0
+pypdf==4.1.0
+PyMuPDF==1.28.2
+pytesseract==0.3.13
+Pillow==12.3.0
+deep-translator==1.11.4
+rapidocr_onnxruntime==1.2.3

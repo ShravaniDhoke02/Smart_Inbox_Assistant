@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: ${JDBC_URL:jdbc:oracle:thin:@oracle-db:1521/FREEPDB1}
+    username: ${JDBC_USER:smartinbox}
+    password: ${JDBC_PASSWORD:smartinbox}
+    driver-class-name: oracle.jdbc.OracleDriver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    database-platform: org.hibernate.dialect.OracleDialect
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# Removing flyway to keep it simpler for prototype, letting hibernate ddl-auto update handle it
+
+mail:
+  imap:
+    host: ${IMAP_HOST:localhost}
+    port: ${IMAP_PORT:993}
+    username: ${IMAP_USERNAME:test}
+    password: ${IMAP_PASSWORD:test}
+    protocol: imaps
+    folder: INBOX
+    enabled: "${IMAP_ENABLED:false}" # Set IMAP_ENABLED=true to ingest a configured test mailbox
+    poll-delay-ms: 60000
+
+ai:
+  service:
+    url: ${AI_SERVICE_URL:http://localhost:8000/analyze}

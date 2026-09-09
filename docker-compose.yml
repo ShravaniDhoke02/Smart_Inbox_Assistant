@@ -1,0 +1,69 @@
+services:
+  ai-service:
+    build:
+      context: ./ai-service
+    container_name: smart-inbox-ai
+    env_file:
+      - ./ai-service/.env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  oracle-db:
+    image: gvenzl/oracle-free:latest
+    container_name: oracle-db
+    environment:
+      - ORACLE_PASSWORD=ClinevoPass123!
+      - APP_USER=smartinbox
+      - APP_USER_PASSWORD=smartinbox
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh" ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    container_name: smart-inbox-backend
+    depends_on:
+      ai-service:
+        condition: service_healthy
+      oracle-db:
+        condition: service_healthy
+    environment:
+      AI_SERVICE_URL: http://ai-service:8000/analyze
+      JDBC_URL: jdbc:oracle:thin:@oracle-db:1521/FREEPDB1
+      JDBC_DRIVER: oracle.jdbc.OracleDriver
+      JDBC_USER: smartinbox
+      JDBC_PASSWORD: smartinbox
+      JPA_DATABASE_PLATFORM: org.hibernate.dialect.OracleDialect
+      SECURITY_ENABLED: ${SECURITY_ENABLED:-false}
+      SMART_INBOX_REVIEWER_USERNAME: ${SMART_INBOX_REVIEWER_USERNAME:-reviewer}
+      SMART_INBOX_REVIEWER_PASSWORD: ${SMART_INBOX_REVIEWER_PASSWORD:-change-me}
+      DEMO_FIXTURE_DIR: /fixtures
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./sample-data:/fixtures:ro
+      - ./runtime-uploads:/tmp/smartinbox-uploads
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: smart-inbox-frontend
+    depends_on:
+      - backend
+    ports:
+      - "4200:80"
+
+volumes:
+  oracle-data:

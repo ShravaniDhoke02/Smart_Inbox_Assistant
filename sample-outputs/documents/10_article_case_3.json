@@ -1,0 +1,211 @@
+{
+  "message_id": "10_article_case_3",
+  "category": "Safety Report (ICSR)",
+  "confidenceScore": 0.71,
+  "classificationReason": "Patient safety signal and adverse-event language were found in the message or attachment.",
+  "aiSummary": "This message concerns Safety Report (ICSR) and appears relevant for pharmacovigilance review. The subject '10_article_case_3' is consistent with a healthcare intake item that requires triage. The email body states that the content should be reviewed for product, patient, and outcome context before final sign-off. The narrative indicates whether the issue reflects an adverse-event signal, a product defect, or an information request. A human reviewer should confirm the exact patient, reporter, product, and outcome details before any case disposition is finalized. The communication should be checked for missing or ambiguous facts such as dose timing, seriousness, and lot or batch information. The document flow prioritizes traceability, so each summary point should be linked back to the original email or attached document content. If an attachment is present, the reviewer should inspect page-level context for the exact source of the relevant facts. If the content indicates a product quality issue, the report should be reviewed for packaging damage, contamination, or incorrect product state. If the content indicates safety concern, the review should confirm adverse-event reporting criteria and any clinical outcome that ultimately occurred. If the content resembles a published case report or article, literature screening should be completed before submission or closure. This summary intentionally preserves uncertainty when the document does not state a fact explicitly, rather than guessing the patient or product details. The PDF or attachment adds supporting context and may require OCR review, translation, or literature screening depending on the document type.",
+  "language": "English",
+  "translatedText": "\nAttachment 1 (10_article_case_3.pdf): [Page 1]\nFictional article\nAbstract\nCase report: a 61-year-old patient developed dizziness.\nConclusion\nReferences\n",
+  "pdfTypes": [
+    "Published article"
+  ],
+  "imageNotes": [
+    "No meaningful image detected."
+  ],
+  "tables": [
+    "No table detected in the provided attachment(s)."
+  ],
+  "literatureScreening": {
+    "isLiteratureLike": true,
+    "screeningStatus": "Human literature review required",
+    "signals": [
+      "abstract",
+      "case report",
+      "references",
+      "conclusion"
+    ],
+    "caseSummary": "Case summary: a patient aged 1 developed Dizziness after exposure to a product with dose not stated. The article notes not stated as the clinical outcome and includes references requiring literature review.",
+    "cases": [
+      {
+        "caseNumber": 1,
+        "sourceText": "Case report: a 61-year-old patient developed dizziness.\nConclusion\n",
+        "summary": "Case summary: a patient aged not stated developed Dizziness after exposure to a product with dose not stated. The article notes not stated as the clinical outcome and includes references requiring literature review.",
+        "sourceReference": "10_article_case_3.pdf, article case section",
+        "patientCaseOnly": true
+      }
+    ],
+    "recommendation": "Check duplicate publication, patient-level case details, and reportability before submission."
+  },
+  "ocrConfidence": {
+    "required": false,
+    "confidence": null,
+    "handwritingConfidence": null,
+    "documents": [],
+    "method": "No OCR required"
+  },
+  "sourceTrace": {
+    "email": "subject=10_article_case_3; sender=synthetic.sender@example.invalid; body=Synthetic fixture message for assignment validation.",
+    "attachments": [
+      "Published article"
+    ],
+    "provenanceRule": "Every extracted fact is trace-linked to the message body or attachment text. PDF text includes [Page N] markers for page-level review.",
+    "attachmentSummaries": [
+      {
+        "attachment": "10_article_case_3.pdf",
+        "summary": "10_article_case_3.pdf was identified as a Published article. The document contains 1 page markers for reviewer navigation. Its provisional content classification is Safety Report (ICSR). The classification rationale is Patient safety signal and adverse-event language were found in the message or attachment. The reviewer should verify the original page context before accepting any extracted value. Facts absent from the document must remain Not stated rather than inferred. Evidence references preserve the PDF page where matched text was found. Any table or image result is presented as review support, not as an automatic clinical conclusion. If this is an article, only patient-level case information should be considered for reporting review. This document requires human sign-off before any final workflow decision is made.",
+        "pdfType": "Published article"
+      }
+    ],
+    "ocrAssessments": [
+      {
+        "required": false,
+        "confidence": null,
+        "handwritingConfidence": null,
+        "method": "Direct digital-text extraction",
+        "attachment": "10_article_case_3.pdf"
+      }
+    ]
+  },
+  "extractedFacts": [
+    {
+      "factGroup": "Reaction",
+      "fieldName": "What",
+      "fieldValue": "Dizziness",
+      "confidence": 0.85,
+      "sourceReference": "PDF attachment, page 1, matched text: Dizziness"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Age",
+      "fieldValue": "61",
+      "confidence": 0.9,
+      "sourceReference": "PDF attachment, page 1, matched text: 61"
+    },
+    {
+      "factGroup": "Narrative",
+      "fieldName": "Case Summary",
+      "fieldValue": "Attachment 1 (10_article_case_3.pdf): [Page 1] Fictional article Abstract Case report: a 61-year-old patient developed dizziness. Conclusion References",
+      "confidence": 0.78,
+      "sourceReference": "Attachment text"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Initials",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Sex",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Weight",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Height",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "Relevant History",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reporter",
+      "fieldName": "Role",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reporter",
+      "fieldName": "Country",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Name",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Dose",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Route",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Therapy Start",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "Therapy Stop",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "Onset",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "Outcome",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Death",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Hospitalization",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    },
+    {
+      "factGroup": "Severity",
+      "fieldName": "Life-Threatening",
+      "fieldValue": "Not stated",
+      "confidence": 0.0,
+      "sourceReference": "Not stated in email body or PDF attachment"
+    }
+  ]
+}

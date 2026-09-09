@@ -1,0 +1,14 @@
+
+@import '~@angular/material/prebuilt-themes/indigo-pink.css';
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  background: #f7f9fc;
+  -webkit-font-smoothing: antialiased;
+}
+

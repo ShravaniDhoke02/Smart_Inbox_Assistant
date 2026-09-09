@@ -1,0 +1,298 @@
+{
+  "notes": "Synthetic ground-truth labels for evaluating the Smart Inbox Assistant pipeline against this test set. All patients/products/people are fictional.",
+  "emails": [
+    {
+      "file": "emails/01_safety_report_detailed.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "high",
+      "key_facts": {
+        "patient": {"age": "62", "sex": "female", "weight": "68 kg", "history": "hypertension, type 2 diabetes"},
+        "reporter": {"name": "Dr. Meera Kulkarni", "role": "treating physician", "country": "India"},
+        "product": {"name": "Cardiozin (amlopril)", "dose": "10 mg", "route": "oral", "start_date": "2026-07-15", "stop_date": "2026-07-22"},
+        "reaction": {"description": "facial and lip angioedema, difficulty breathing", "onset": "2026-07-22", "outcome": "recovered"},
+        "severity": "serious - hospitalization (2 days)"
+      },
+      "attachments": ["Cardiozin_Case_Summary.pdf", "Cardiozin_Lab_Report.pdf"]
+    },
+    {
+      "file": "emails/02_safety_report_minimal.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "medium-low (informal, missing reporter role/country, no explicit patient age/sex)",
+      "key_facts": {
+        "patient": {"age": "Not stated", "sex": "Not stated (self-reporting, likely male based on sender name)"},
+        "reporter": {"name": "Ramesh Patel", "role": "Not stated - appears to be patient/consumer", "country": "Not stated"},
+        "product": {"name": "Fevrolix", "dose": "Not stated"},
+        "reaction": {"description": "severe stomach pain and vomiting", "onset": "2 days after taking tablet", "outcome": "Not stated - ongoing"},
+        "severity": "serious - required hospital visit"
+      }
+    },
+    {
+      "file": "emails/03_safety_report_with_attachment.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "medium (forwarded, references scanned attachment)",
+      "key_facts": {
+        "product": {"name": "Neurotab XR"},
+        "reaction": {"description": "seizures after dose escalation"},
+        "severity": "serious - flagged as such by forwarding desk, hospitalization implied"
+      },
+      "attachments": ["Neurotab_Handwritten_Form_Scan.pdf"]
+    },
+    {
+      "file": "emails/04_safety_report_followup.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "high",
+      "note": "Follow-up to case in email 01 - should be linked/merged, not treated as a brand-new case.",
+      "key_facts": {
+        "reaction": {"outcome": "fully resolved, no sequelae, 2026-07-28"},
+        "product": {"note": "no rechallenge attempted, switched to alternative drug class"}
+      }
+    },
+    {
+      "file": "emails/05_safety_report_vague.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "low",
+      "note": "Deliberately vague - no confirmed drug name, no confirmed patient identity, secondhand report. Pipeline should say 'unknown'/'not stated' extensively rather than guessing a drug name.",
+      "key_facts": {
+        "product": {"name": "Not stated - possibly a pain relief gel, uncertain"},
+        "reaction": {"description": "skin redness"},
+        "severity": "not stated, not hospitalized"
+      }
+    },
+    {
+      "file": "emails/06_quality_complaint_1.eml",
+      "categories": ["Quality Complaint"],
+      "expected_confidence": "high",
+      "key_facts": {
+        "product": "Cardiozin 10mg", "batch_lot": "CZ-2291", "expiry": "03/2028",
+        "defect": "broken/compromised blister seal, foil peeling",
+        "photo_mentioned": false,
+        "patient_exposure": "none"
+      }
+    },
+    {
+      "file": "emails/07_quality_complaint_2.eml",
+      "categories": ["Quality Complaint"],
+      "expected_confidence": "high",
+      "key_facts": {
+        "product": "Fevrolix syrup", "batch_lot": "FVX-0087",
+        "defect": "cloudy liquid with white particles",
+        "photo_mentioned": false,
+        "patient_exposure": "none - not consumed"
+      }
+    },
+    {
+      "file": "emails/08_info_request_1.eml",
+      "categories": ["Info Request"],
+      "expected_confidence": "high",
+      "key_facts": {
+        "product_or_topic": "Neurotab XR - dosing in elderly with renal impairment; warfarin interaction",
+        "questions": [
+          "Recommended starting dose in patients >70 yrs with mild renal impairment?",
+          "Safe to co-administer with warfarin? Known interaction?"
+        ]
+      }
+    },
+    {
+      "file": "emails/09_info_request_2.eml",
+      "categories": ["Info Request"],
+      "expected_confidence": "high",
+      "key_facts": {
+        "product_or_topic": "Cardiozin - grapefruit juice interaction, timing of dose",
+        "questions": [
+          "Does Cardiozin interact with grapefruit juice?",
+          "Can it be taken at night instead of morning?"
+        ]
+      }
+    },
+    {
+      "file": "emails/10_marketing_irrelevant.eml",
+      "categories": ["Not Relevant"],
+      "expected_confidence": "high"
+    },
+    {
+      "file": "emails/11_internal_admin_irrelevant.eml",
+      "categories": ["Not Relevant"],
+      "expected_confidence": "high"
+    },
+    {
+      "file": "emails/12_mixed_safety_and_quality.eml",
+      "categories": ["Safety Report", "Quality Complaint"],
+      "expected_confidence": "high for both labels",
+      "note": "Tests multi-label output - a reaction AND a suspected batch defect (discoloured tablets) reported together.",
+      "key_facts": {
+        "patient": {"age": "45", "sex": "male"},
+        "product": {"name": "Fevrolix", "batch_lot": "FVX-0091"},
+        "reaction": {"description": "severe skin rash with blistering", "onset": "within 24 hours"},
+        "defect": "tablets discoloured (yellowish vs white)",
+        "severity": "not hospitalized, worsening rash, dermatology referral"
+      }
+    },
+    {
+      "file": "emails/13_literature_article_forward.eml",
+      "categories": ["Safety Report (pending review)"],
+      "expected_confidence": "n/a until article PDF is screened",
+      "note": "Bonus/Section 4 literature-screening flow: forwarded article, not a direct case submission.",
+      "attachments": ["Journal_Article_Cardiozin_Case.pdf"]
+    },
+    {
+      "file": "emails/14_non_english_reaction_spanish.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "high",
+      "language": "es",
+      "key_facts": {
+        "product": "Cardiozin", "reaction": "angioedema (per attached PDF)"
+      },
+      "attachments": ["Reporte_Caso_Cardiozin_ES.pdf"]
+    },
+    {
+      "file": "emails/15_non_english_reaction_french.eml",
+      "categories": ["Safety Report"],
+      "expected_confidence": "high",
+      "language": "fr",
+      "key_facts": {
+        "product": "Neurotab XR", "reaction": "generalized seizure (per attached PDF)"
+      },
+      "attachments": ["Rapport_Cas_NeurotabXR_FR.pdf"]
+    }
+  ],
+  "pdfs": {
+    "normal_digital": [
+      {
+        "file": "pdfs/normal_digital/Cardiozin_Case_Summary.pdf",
+        "type": "normal_digital",
+        "categories": ["Safety Report"],
+        "has_table": false,
+        "linked_email": "emails/01_safety_report_detailed.eml"
+      },
+      {
+        "file": "pdfs/normal_digital/Cardiozin_Lab_Report.pdf",
+        "type": "normal_digital",
+        "categories": ["Safety Report - supporting evidence"],
+        "has_table": true,
+        "table_content": "lab values (tryptase, C4, WBC, eosinophils, BP, SpO2)",
+        "linked_email": "emails/01_safety_report_detailed.eml"
+      },
+      {
+        "file": "pdfs/normal_digital/Fevrolix_Quality_Complaint_Form.pdf",
+        "type": "normal_digital",
+        "categories": ["Quality Complaint"],
+        "has_table": false,
+        "key_facts": {"batch_lot": "CZ-2291", "defect": "broken blister seal"}
+      },
+      {
+        "file": "pdfs/normal_digital/Neurotab_MI_Request_Log.pdf",
+        "type": "normal_digital",
+        "categories": ["Info Request"],
+        "has_table": false
+      },
+      {
+        "file": "pdfs/normal_digital/Neurotab_Seizure_Case_Form.pdf",
+        "type": "normal_digital",
+        "categories": ["Safety Report"],
+        "has_table": true,
+        "table_content": "dosing schedule / titration table",
+        "linked_email": "emails/03_safety_report_with_attachment.eml"
+      }
+    ],
+    "scanned_handwritten": [
+      {
+        "file": "pdfs/scanned_handwritten/Neurotab_Handwritten_Form_Scan.pdf",
+        "type": "scanned_handwritten",
+        "categories": ["Safety Report"],
+        "expected_ocr_confidence": "medium - cursive handwriting, some smudges",
+        "linked_email": "emails/03_safety_report_with_attachment.eml",
+        "key_facts": {
+          "patient": {"age": "34", "sex": "male"},
+          "product": "Neurotab XR", "dose": "300 mg twice daily",
+          "reaction": "generalized seizure ~2 hrs after evening dose",
+          "severity": "serious - hospitalization"
+        }
+      },
+      {
+        "file": "pdfs/scanned_handwritten/Fevrolix_Handwritten_Card_Scan.pdf",
+        "type": "scanned_handwritten",
+        "categories": ["Safety Report"],
+        "expected_ocr_confidence": "medium",
+        "key_facts": {
+          "patient": {"initials": "A.K.", "age": "51", "sex": "female"},
+          "product": "Fevrolix syrup",
+          "reaction": "dizziness, lip tingling, mild tongue swelling",
+          "severity": "not hospitalized, self-resolved"
+        }
+      }
+    ],
+    "articles": [
+      {
+        "file": "pdfs/articles/Journal_Article_Cardiozin_Case.pdf",
+        "type": "article",
+        "layout": "two-column with references",
+        "contains_reportable_case": true,
+        "num_cases": 1,
+        "categories": ["Safety Report (via literature screening)"],
+        "linked_email": "emails/13_literature_article_forward.eml"
+      },
+      {
+        "file": "pdfs/articles/Journal_Article_Neurotab_Case.pdf",
+        "type": "article",
+        "layout": "two-column with references",
+        "contains_reportable_case": true,
+        "num_cases": 1,
+        "categories": ["Safety Report (via literature screening)"]
+      },
+      {
+        "file": "pdfs/articles/Journal_Article_Fevrolix_Case.pdf",
+        "type": "article",
+        "layout": "two-column with references",
+        "contains_reportable_case": true,
+        "num_cases": 1,
+        "categories": ["Safety Report (via literature screening)", "Quality Complaint (batch discoloration mentioned)"]
+      },
+      {
+        "file": "pdfs/articles/Journal_Article_General_Review_NoCase.pdf",
+        "type": "article",
+        "layout": "two-column with references",
+        "contains_reportable_case": false,
+        "num_cases": 0,
+        "categories": ["Not Relevant (for ICSR purposes) - background/review only"],
+        "note": "Edge case: mentions drug class and products in aggregate but describes no identifiable individual patient. Should NOT be extracted as a case."
+      },
+      {
+        "file": "pdfs/articles/Journal_Article_TwoCase_Series.pdf",
+        "type": "article",
+        "layout": "two-column with references",
+        "contains_reportable_case": true,
+        "num_cases": 2,
+        "categories": ["Safety Report (via literature screening) - TWO separate cases to split"],
+        "note": "Edge case: one article, two unrelated patients (Cardiozin case + Neurotab XR case). Pipeline should output two separate case records."
+      }
+    ],
+    "non_english": [
+      {
+        "file": "pdfs/non_english/Reporte_Caso_Cardiozin_ES.pdf",
+        "type": "non_english",
+        "language": "es",
+        "categories": ["Safety Report"],
+        "linked_email": "emails/14_non_english_reaction_spanish.eml",
+        "key_facts": {
+          "patient": {"age": "57", "sex": "female"},
+          "product": "Cardiozin (amlopril)", "dose": "10 mg",
+          "reaction": "angioedema (labios y parpados)",
+          "severity": "serious - urgent care visit, 24h observation"
+        }
+      },
+      {
+        "file": "pdfs/non_english/Rapport_Cas_NeurotabXR_FR.pdf",
+        "type": "non_english",
+        "language": "fr",
+        "categories": ["Safety Report"],
+        "linked_email": "emails/15_non_english_reaction_french.eml",
+        "key_facts": {
+          "patient": {"age": "41", "sex": "male"},
+          "product": "Neurotab XR", "dose": "300 mg twice daily",
+          "reaction": "generalized seizure after dose increase",
+          "severity": "serious - 24h hospitalization"
+        }
+      }
+    ]
+  }
+}

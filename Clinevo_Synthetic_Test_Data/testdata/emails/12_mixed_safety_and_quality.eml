@@ -1,0 +1,16 @@
+From: pharmacist@wellcare-pharmacy-test.example
+To: drugsafety-mailbox@pharmatest.example
+Subject: Patient reaction possibly linked to defective batch - Fevrolix
+Date: Fri, 21 Aug 2026 15:18:00 +0530
+
+Reporting on behalf of a patient (male, 45 years) who took Fevrolix tablets from Batch FVX-0091 and
+developed a severe skin rash with blistering within 24 hours of the first dose. On inspecting the
+remaining strip, I noticed the tablets appeared discoloured (yellowish instead of white) compared to a
+previous batch, which raises the possibility that this is linked to a manufacturing/quality defect in
+that specific batch rather than a typical drug reaction. Patient was advised to stop the medication and
+seek dermatology consult; not hospitalized so far but rash is worsening.
+
+This may need to be logged both as a possible adverse reaction and a product quality issue given the
+tablet discolouration.
+
+- Pharmacist, WellCare Pharmacy (synthetic test data)

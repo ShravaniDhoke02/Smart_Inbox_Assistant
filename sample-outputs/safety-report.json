@@ -1,0 +1,61 @@
+{
+  "message_id": "MSG-0001",
+  "category": "Safety Report (ICSR)",
+  "confidenceScore": 0.92,
+  "classificationReason": "Patient safety signal and adverse-event language were found in the message or attachment.",
+  "aiSummary": "This message concerns Safety Report (ICSR) and appears relevant for pharmacovigilance review. The subject 'Adverse event — nausea after Aspirin' is consistent with a healthcare intake item that requires triage. The email body and attached content describe the key context, including product context and whether the issue is an adverse event, product defect, or information request. The document should be reviewed by a human to confirm the exact patient, reporter, product, and outcome details before final sign-off.",
+  "language": "English",
+  "pdfTypes": [
+    "Normal digital PDF"
+  ],
+  "imageNotes": [
+    "No meaningful image detected."
+  ],
+  "tables": [
+    "No table detected in the provided attachment(s)."
+  ],
+  "sourceTrace": {
+    "email": "subject=Adverse event — nausea after Aspirin; sender=dr.lee@synthetic.example; body=Synthetic patient, a 45-year-old male weighing 80 kg, developed nausea two hours after 500 mg Aspirin. He was not hospitalized and is improving.",
+    "attachments": [
+      "Normal digital PDF"
+    ],
+    "provenanceRule": "Every extracted fact is trace-linked to the message body or attachment text to support auditability."
+  },
+  "extractedFacts": [
+    {
+      "factGroup": "Patient",
+      "fieldName": "age",
+      "fieldValue": "45",
+      "confidence": 0.75,
+      "sourceReference": "Email body; exact text match in message body/attachment"
+    },
+    {
+      "factGroup": "Patient",
+      "fieldName": "sex",
+      "fieldValue": "male",
+      "confidence": 0.75,
+      "sourceReference": "Email body; exact text match in message body/attachment"
+    },
+    {
+      "factGroup": "Product",
+      "fieldName": "dose",
+      "fieldValue": "500 mg",
+      "confidence": 0.75,
+      "sourceReference": "Email body; exact text match in message body/attachment"
+    },
+    {
+      "factGroup": "Reaction",
+      "fieldName": "what",
+      "fieldValue": "Nausea",
+      "confidence": 0.75,
+      "sourceReference": "Email body; exact text match in message body/attachment"
+    },
+    {
+      "factGroup": "Narrative",
+      "fieldName": "Case summary",
+      "fieldValue": "Synthetic case describes a patient with an adverse reaction to a medicinal product, requiring review for causality and outcome assessment.",
+      "confidence": 0.78,
+      "sourceReference": "Email body"
+    }
+  ]
+}

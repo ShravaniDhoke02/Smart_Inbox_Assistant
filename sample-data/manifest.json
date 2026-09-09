@@ -1,0 +1,77 @@
+[
+  {
+    "filename": "01_digital_safety.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "02_digital_safety_table.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "03_digital_quality.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "04_digital_info_request.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "05_digital_irrelevant.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "06_scan_handwritten_safety.pdf",
+    "pdfType": "scan",
+    "synthetic": true
+  },
+  {
+    "filename": "07_scan_handwritten_quality.pdf",
+    "pdfType": "scan",
+    "synthetic": true
+  },
+  {
+    "filename": "08_article_case_1.pdf",
+    "pdfType": "article",
+    "synthetic": true
+  },
+  {
+    "filename": "09_article_case_2.pdf",
+    "pdfType": "article",
+    "synthetic": true
+  },
+  {
+    "filename": "10_article_case_3.pdf",
+    "pdfType": "article",
+    "synthetic": true
+  },
+  {
+    "filename": "11_article_case_4.pdf",
+    "pdfType": "article",
+    "synthetic": true
+  },
+  {
+    "filename": "12_article_case_5.pdf",
+    "pdfType": "article",
+    "synthetic": true
+  },
+  {
+    "filename": "13_spanish_case.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "14_hindi_case.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  },
+  {
+    "filename": "15_mixed_safety_quality.pdf",
+    "pdfType": "digital",
+    "synthetic": true
+  }
+]
