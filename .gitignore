@@ -73,3 +73,24 @@ Thumbs.db
 
 # Environment / secrets
 .env
+
+# Gradle caches and distributions
+.gradle/
+.gradle-home/
+.gradle-check/
+backend/gradle-8.10/
+
+# JDK/runtime installations
+.runtime/
+ai-service/oracleJdk-26/
+
+# Build output
+build/
+*/build/
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
