@@ -1,0 +1,13 @@
+-- smart-inbox-assistant
+-- Run as a DBA in FREEPDB1 (Oracle 23c Free / XE compatible).
+-- Creates the application schema owner used by Spring Boot.
+
+ALTER SESSION SET CONTAINER = FREEPDB1;
+
+CREATE USER smartinbox IDENTIFIED BY smartinbox
+  DEFAULT TABLESPACE USERS
+  TEMPORARY TABLESPACE TEMP
+  QUOTA UNLIMITED ON USERS;
+
+GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER TO smartinbox;
+GRANT CREATE VIEW, CREATE SYNONYM TO smartinbox;

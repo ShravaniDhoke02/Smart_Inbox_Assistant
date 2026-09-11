@@ -1,5 +1,8 @@
 import os
+import re
 import unittest
+
+os.environ["AI_SERVICE_DISABLE_LLM"] = "1"
 
 from main import (
     analyze_document_payload,
@@ -289,6 +292,52 @@ class ClassifierTests(unittest.TestCase):
         )
         sentence_count = len([s for s in summary.split('.') if s.strip()])
         self.assertGreaterEqual(sentence_count, 10)
+
+    def test_gastromid_article_case_extracts_present_fields(self):
+        text = (
+            "A 41-year-old female developed abdominal discomfort after "
+            "starting Gastromid 25 mg on 20-Jul-2026. Discomfort began "
+            "23-Jul-2026. No hospitalization. Symptoms resolved after "
+            "discontinuation."
+        )
+        facts = extract_facts("Fictional article case", "", text, "Safety Report (ICSR)")
+        values = {(fact["factGroup"], fact["fieldName"]): fact["fieldValue"] for fact in facts}
+        self.assertEqual(values[("Patient", "Age")], "41")
+        self.assertEqual(values[("Patient", "Sex")], "Female")
+        self.assertEqual(values[("Product", "Name")], "Gastromid")
+        self.assertRegex(str(values[("Product", "Dose")]), r"(?i)25\s*mg")
+        self.assertIn("20-Jul-2026", str(values[("Product", "Therapy Start")]))
+        self.assertIn("abdominal discomfort", values[("Reaction", "What")].lower())
+        self.assertIn("23-Jul-2026", str(values[("Reaction", "Onset")]))
+        self.assertRegex(values[("Reaction", "Outcome")].lower(), r"resolved")
+        self.assertEqual(values[("Severity", "Hospitalization")], "No")
+        for group, field in (
+            ("Patient", "Weight"),
+            ("Patient", "Height"),
+            ("Reporter", "Name"),
+            ("Product", "Route"),
+            ("Product", "Therapy Stop"),
+        ):
+            self.assertEqual(values[(group, field)], "Not stated")
+
+    def test_article_isolation_keeps_patient_case_and_drops_references(self):
+        from main import isolate_article_case_sections_regex
+        article = (
+            "Abstract\nBackground wording only.\n"
+            "Case Presentation\nA 41-year-old female developed abdominal discomfort after starting Gastromid 25 mg.\n"
+            "Discussion\nThis is not the case narrative.\n"
+            "References\n1. Example 2020."
+        )
+        sections = isolate_article_case_sections_regex(article)
+        joined = "\n".join(sections)
+        self.assertIn("Gastromid", joined)
+        self.assertNotIn("Example 2020", joined)
+
+    def test_json_fence_retry_helper_strips_markdown(self):
+        from main import parse_llm_json
+        parsed, error = parse_llm_json("```json\n{\"age\": {\"value\": \"41\"}}\n```", "unit")
+        self.assertIsNone(error)
+        self.assertEqual(parsed["age"]["value"], "41")
 
     def test_literature_screen_batch_endpoint_works(self):
         results = screen_literature(

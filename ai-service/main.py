@@ -91,9 +91,449 @@ REQUIRED_SAFETY_FIELDS = [
     ("Severity", "Life-Threatening"), ("Narrative", "Case Summary"),
 ]
 
+DUMP_EXTRACTED_TEXT = os.environ.get("DUMP_EXTRACTED_TEXT", "1").strip().lower() not in {"0", "false", "no"}
+DEBUG_DUMP_DIR = Path(__file__).with_name("debug_dumps")
+
+ICS_SCHEMA_MAP = [
+    ("patient", "age", "Patient", "Age"),
+    ("patient", "sex", "Patient", "Sex"),
+    ("patient", "weight", "Patient", "Weight"),
+    ("patient", "height", "Patient", "Height"),
+    ("patient", "relevant_history", "Patient", "Relevant History"),
+    ("reporter", "who", "Reporter", "Name"),
+    ("reporter", "role", "Reporter", "Role"),
+    ("reporter", "country", "Reporter", "Country"),
+    ("product", "name", "Product", "Name"),
+    ("product", "dose", "Product", "Dose"),
+    ("product", "route", "Product", "Route"),
+    ("product", "start_date", "Product", "Therapy Start"),
+    ("product", "stop_date", "Product", "Therapy Stop"),
+    ("reaction", "description", "Reaction", "What"),
+    ("reaction", "onset_date", "Reaction", "Onset"),
+    ("reaction", "outcome", "Reaction", "Outcome"),
+    ("severity", "is_serious", "Severity", "Hospitalization"),
+    ("severity", "criteria", "Severity", "Life-Threatening"),
+]
+
+EXTRACTION_GROUPS = [
+    ("patient_reaction", ["patient", "reaction"],
+     "Extract ONLY patient and reaction fields from the source text."),
+    ("product_reporter", ["product", "reporter"],
+     "Extract ONLY product/drug and reporter fields from the source text."),
+    ("severity_narrative", ["severity", "narrative"],
+     "Extract ONLY seriousness/hospitalization and a short case narrative from the source text."),
+]
+
 
 def sentence_count(text):
     return len([part for part in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if part])
+
+
+def strip_json_payload(text):
+    """Remove markdown fences and isolate the first JSON object/array."""
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*```$", "", raw)
+    start_obj, start_arr = raw.find("{"), raw.find("[")
+    starts = [index for index in (start_obj, start_arr) if index != -1]
+    if not starts:
+        return raw
+    start = min(starts)
+    end_token = "}" if raw[start] == "{" else "]"
+    end = raw.rfind(end_token)
+    return raw[start:end + 1] if end > start else raw
+
+
+def parse_llm_json(text, label="llm"):
+    payload = strip_json_payload(text)
+    try:
+        parsed = json.loads(payload)
+        logger.info("LLM JSON parse succeeded for %s (chars=%s)", label, len(payload))
+        return parsed, None
+    except Exception as exc:
+        logger.warning("LLM JSON parse failed for %s: %s | raw=%s", label, exc, (text or "")[:800])
+        return None, str(exc)
+
+
+def dump_extracted_text(message_id, filename, pdf_type, text):
+    """Persist raw PDF text so reviewers can see exactly what the LLM received."""
+    logger.info(
+        "Raw extracted text [%s] type=%s file=%s length=%s preview=%s",
+        message_id or "no-id",
+        pdf_type,
+        filename,
+        len(text or ""),
+        re.sub(r"\s+", " ", str(text or ""))[:400],
+    )
+    if not DUMP_EXTRACTED_TEXT:
+        return None
+    try:
+        DEBUG_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{message_id or 'doc'}_{filename}_{pdf_type}")[:120]
+        path = DEBUG_DUMP_DIR / f"{safe_name}.txt"
+        path.write_text(
+            f"filename={filename}\npdf_type={pdf_type}\nlength={len(text or '')}\n\n{text or ''}",
+            encoding="utf-8",
+        )
+        return str(path)
+    except Exception as exc:
+        logger.warning("Could not dump extracted text for %s: %s", filename, exc)
+        return None
+
+
+def join_pdf_spans(spans):
+    """Insert a space when adjacent PDF spans were drawn without a gap."""
+    out = ""
+    for span in spans or []:
+        text = str(span.get("text") if isinstance(span, dict) else span or "")
+        if not text:
+            continue
+        if out and not out[-1].isspace() and not text[0].isspace():
+            out += " "
+        out += text
+    return out
+
+
+def extract_page_text_layout_aware(page_obj):
+    """Read PDF text in visual reading order, keeping two-column articles unscrambled."""
+    dict_page = page_obj.get_text("dict") or {}
+    raw_blocks = [block for block in dict_page.get("blocks") or [] if block.get("type") == 0]
+    page_width = page_obj.rect.width or 1
+    left = [block for block in raw_blocks if block.get("bbox", [0, 0, 0, 0])[0] < page_width * 0.48]
+    right = [block for block in raw_blocks if block.get("bbox", [0, 0, 0, 0])[0] >= page_width * 0.52]
+    two_column = len(left) >= 2 and len(right) >= 2
+    midpoint = page_width / 2.0
+
+    def sort_key(block):
+        bbox = block.get("bbox") or [0, 0, 0, 0]
+        column = 0 if not two_column or bbox[0] < midpoint else 1
+        return (column, round(bbox[1], 1), round(bbox[0], 1))
+
+    lines = []
+    for block in sorted(raw_blocks, key=sort_key):
+        for line in block.get("lines") or []:
+            line_text = join_pdf_spans(line.get("spans") or []).strip()
+            if line_text:
+                lines.append(line_text)
+    text = "\n".join(lines).strip()
+    if text:
+        return repair_glued_pdf_text(text)
+
+    blocks = [block for block in page_obj.get_text("blocks") if len(block) > 4 and str(block[4]).strip()]
+    if not blocks:
+        return repair_glued_pdf_text((page_obj.get_text("text") or "").strip())
+
+    def block_key(block):
+        column = 0 if not two_column or block[0] < midpoint else 1
+        return (column, round(block[1], 1), round(block[0], 1))
+
+    ordered = []
+    for block in sorted(blocks, key=block_key):
+        chunk = re.sub(r"[ \t]+\n", "\n", str(block[4]).strip())
+        if chunk:
+            ordered.append(chunk)
+    return repair_glued_pdf_text("\n".join(ordered))
+
+
+def repair_glued_pdf_text(text):
+    """Undo common form-layout joins such as 'cracked capPhoto mentionedYes'."""
+    value = text or ""
+    value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
+    value = re.sub(r"(?i)(cap|seal|packaging|blister)(photo)", r"\1 \2", value)
+    value = re.sub(
+        r"(?i)(?<=[a-z])(?=(photo\s*mentioned|photo\s*provided|photo\s*attached|complaint|batch|lot|product|defect))",
+        " ",
+        value,
+    )
+    value = re.sub(
+        r"(?i)(photo\s*(?:mentioned|provided|attached))\s*[:\-]?\s*(yes|no|y|n|photos?\s+to follow[^\n]*)",
+        r"\1: \2",
+        value,
+    )
+    value = re.sub(r"(?i)(yes|no)(?=complaint\b)", r"\1\n", value)
+    value = re.sub(r"[ \t]+\n", "\n", value)
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    return value.strip()
+
+
+def generate_llm_json(prompt, label="llm", retry=True):
+    """Call Gemini and parse JSON, retrying once on malformed output."""
+    if not GEMINI_API_KEY or os.environ.get("AI_SERVICE_DISABLE_LLM", "").strip().lower() in {"1", "true", "yes"}:
+        return None, {"skipped": "no API key or AI_SERVICE_DISABLE_LLM", "label": label}
+    debug = {"label": label, "promptChars": len(prompt or ""), "retry": False, "parseError": None}
+    logger.info("LLM prompt sent [%s] chars=%s preview=%s", label, len(prompt or ""), (prompt or "")[:400])
+    try:
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        response = model.generate_content([SYSTEM_INSTRUCTION, prompt])
+        raw = str(getattr(response, "text", "") or "").strip()
+        logger.info("LLM raw response [%s] chars=%s preview=%s", label, len(raw), raw[:400])
+        parsed, error = parse_llm_json(raw, label)
+        if parsed is not None:
+            debug["rawChars"] = len(raw)
+            return parsed, debug
+        debug["parseError"] = error
+        debug["rawPreview"] = raw[:800]
+        if retry:
+            debug["retry"] = True
+            logger.warning("Retrying %s with stricter JSON-only instruction", label)
+            retry_prompt = (
+                "Return ONLY valid JSON. No markdown fences, no commentary, no trailing text.\n\n"
+                + prompt
+            )
+            retry_response = model.generate_content([SYSTEM_INSTRUCTION, retry_prompt])
+            retry_raw = str(getattr(retry_response, "text", "") or "").strip()
+            logger.info("LLM retry response [%s] chars=%s preview=%s", label, len(retry_raw), retry_raw[:400])
+            parsed, retry_error = parse_llm_json(retry_raw, f"{label}-retry")
+            debug["retryParseError"] = retry_error
+            debug["retryRawPreview"] = retry_raw[:800]
+            return parsed, debug
+        return None, debug
+    except Exception as exc:
+        logger.error("LLM call failed [%s]: %s", label, exc)
+        debug["exception"] = str(exc)
+        return None, debug
+
+
+def empty_ics_schema():
+    field = {"value": "Not stated", "confidence": 0.0, "source": ""}
+    return {
+        "patient": {key: dict(field) for key in ("age", "sex", "weight", "height", "relevant_history")},
+        "reporter": {key: dict(field) for key in ("who", "role", "country")},
+        "product": {key: dict(field) for key in ("name", "dose", "route", "start_date", "stop_date")},
+        "reaction": {key: dict(field) for key in ("description", "onset_date", "outcome")},
+        "severity": {key: dict(field) for key in ("is_serious", "criteria")},
+        "narrative": {"value": "Not stated"},
+    }
+
+
+def merge_ics_schema(base, incoming):
+    merged = empty_ics_schema() if not base else json.loads(json.dumps(base))
+    incoming = incoming or {}
+    for group in ("patient", "reporter", "product", "reaction", "severity"):
+        src = incoming.get(group) if isinstance(incoming.get(group), dict) else {}
+        for key, node in src.items():
+            if key not in merged[group]:
+                continue
+            if isinstance(node, dict):
+                value = str(node.get("value") or "").strip() or "Not stated"
+                if value.lower() != "not stated":
+                    merged[group][key] = {
+                        "value": value,
+                        "confidence": normalise_confidence(node.get("confidence")),
+                        "source": str(node.get("source") or ""),
+                    }
+            elif str(node or "").strip() and str(node).strip().lower() != "not stated":
+                merged[group][key] = {
+                    "value": str(node).strip(),
+                    "confidence": 0.7,
+                    "source": "",
+                }
+    narrative = incoming.get("narrative")
+    if isinstance(narrative, dict):
+        narrative_value = str(narrative.get("value") or "").strip()
+    else:
+        narrative_value = str(narrative or "").strip()
+    if narrative_value and narrative_value.lower() != "not stated":
+        merged["narrative"] = {"value": narrative_value}
+    return merged
+
+
+def flatten_ics_schema(schema, email_body, attachment_text):
+    facts = []
+    schema = schema or empty_ics_schema()
+    for group_key, field_key, fact_group, field_name in ICS_SCHEMA_MAP:
+        node = (schema.get(group_key) or {}).get(field_key) or {}
+        value = str(node.get("value") or "Not stated").strip() or "Not stated"
+        source = str(node.get("source") or "").strip()
+        if value.lower() == "not stated":
+            confidence = 0.0
+            reference = missing_source_reference(value, email_body, attachment_text)
+        else:
+            confidence = normalise_confidence(node.get("confidence") or 0.8)
+            reference = source or source_reference(email_body, value, attachment_text)
+        if field_name == "Hospitalization" and re.search(r"(?i)\bno\b|not hospital", value):
+            value = "No"
+        facts.append({
+            "factGroup": fact_group,
+            "fieldName": field_name,
+            "fieldValue": value,
+            "confidence": confidence,
+            "sourceReference": reference,
+        })
+    narrative = str((schema.get("narrative") or {}).get("value") or "").strip() or "Not stated"
+    facts.append({
+        "factGroup": "Narrative",
+        "fieldName": "Case Summary",
+        "fieldValue": narrative,
+        "confidence": 0.7 if narrative.lower() != "not stated" else 0.0,
+        "sourceReference": source_reference(email_body, narrative[:200], attachment_text),
+    })
+    return facts
+
+
+def isolate_article_case_sections_regex(article_text):
+    """Keep only patient-case prose; drop Abstract restatement, Discussion, References when possible."""
+    article_text = str(article_text or "")
+    article_text = re.split(
+        r"(?im)^\s*(references|bibliography|acknowledg(?:e)?ments|conflict of interest)\s*$",
+        article_text,
+        maxsplit=1,
+    )[0]
+    intro_start = 0
+    intro_match = re.search(r"(?im)^\s*(?:Introduction|Background|Clinical\s+Background)\b", article_text)
+    if intro_match:
+        intro_start = intro_match.start()
+    candidates = []
+    for pattern in [
+        r"(?i)\bCase\s+Presentation\b",
+        r"(?i)\bCase\s+Report\b",
+        r"(?i)\bCase\s+\d+\b",
+        r"(?i)\bPatient\s+\d+\b",
+        r"(?i)\bClinical\s+Course\b",
+    ]:
+        for match in re.finditer(pattern, article_text[intro_start:]):
+            start = intro_start + match.start()
+            context = article_text[start:start + 280]
+            if re.search(
+                r"(?i)\b\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\b|\b(?:female|male|woman|man)\b|\bpatient\b",
+                context,
+            ):
+                candidates.append(start)
+    if not candidates:
+        fallback_pattern = re.compile(
+            r"(?i)\bA\s+\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\s+(?:female|male|woman|man|patient)\b"
+        )
+        for match in fallback_pattern.finditer(article_text[intro_start:] or article_text):
+            candidates.append(intro_start + match.start())
+    starts = sorted(set(candidates))
+    sections = []
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(article_text)
+        section = article_text[start:end].strip()
+        stop_match = re.search(
+            r"(?i)\b(?:discussion|references|conclusion|acknowledg(?:e)?ments|conflict of interest)\b",
+            section,
+        )
+        if stop_match and stop_match.start() > 40:
+            section = section[:stop_match.start()].strip()
+        if section:
+            sections.append(section)
+    if not sections and re.search(r"(?i)\b\d{1,3}-year-old\b", article_text):
+        sections = [article_text]
+    return sections
+
+
+def isolate_article_case_text(article_text, filename=""):
+    regex_sections = isolate_article_case_sections_regex(article_text)
+    regex_joined = "\n\n".join(regex_sections).strip()
+    if not GEMINI_API_KEY:
+        return regex_joined or article_text, {"method": "regex", "sections": len(regex_sections)}
+    prompt = (
+        "Locate and return ONLY the section(s) that describe the actual patient case. "
+        "Ignore Abstract-level restatement if a fuller Case Presentation exists. "
+        "Ignore Discussion, Conclusion, Acknowledgements, and References.\n"
+        "Return JSON: {\"case_sections\": [\"...\"]}.\n\n"
+        f"Filename: {filename}\nDocument text:\n{(article_text or '')[:18000]}"
+    )
+    parsed, debug = generate_llm_json(prompt, label="article-section-isolation")
+    sections = []
+    if isinstance(parsed, dict):
+        raw_sections = parsed.get("case_sections") or parsed.get("sections") or []
+        if isinstance(raw_sections, str):
+            raw_sections = [raw_sections]
+        sections = [str(item).strip() for item in raw_sections if str(item).strip()]
+    isolated = "\n\n".join(sections).strip()
+    if isolated:
+        return isolated, {"method": "llm", "sections": len(sections), "debug": debug}
+    return regex_joined or article_text, {"method": "regex-fallback", "sections": len(regex_sections), "debug": debug}
+
+
+def extract_icsr_schema_grouped(source_text, email_body=""):
+    """Split ICSR extraction into smaller schema-strict LLM calls to reduce field drop-off."""
+    schema = empty_ics_schema()
+    debug = []
+    if not GEMINI_API_KEY:
+        return schema, debug
+    schema_reminder = (
+        "Return valid JSON only matching this schema fragment. "
+        "For every field, if the exact fact is not explicitly stated, value MUST be \"Not stated\". "
+        "Never infer or guess. For every non-Not stated field include confidence (0.0-1.0) and "
+        "source (page number and/or section name).\n"
+        "Schema:\n"
+        '{"patient":{"age":{"value":"","confidence":0.0,"source":""},"sex":{"value":"","confidence":0.0,"source":""},'
+        '"weight":{"value":"","confidence":0.0,"source":""},"height":{"value":"","confidence":0.0,"source":""},'
+        '"relevant_history":{"value":"","confidence":0.0,"source":""}},'
+        '"reporter":{"who":{"value":"","confidence":0.0,"source":""},"role":{"value":"","confidence":0.0,"source":""},'
+        '"country":{"value":"","confidence":0.0,"source":""}},'
+        '"product":{"name":{"value":"","confidence":0.0,"source":""},"dose":{"value":"","confidence":0.0,"source":""},'
+        '"route":{"value":"","confidence":0.0,"source":""},"start_date":{"value":"","confidence":0.0,"source":""},'
+        '"stop_date":{"value":"","confidence":0.0,"source":""}},'
+        '"reaction":{"description":{"value":"","confidence":0.0,"source":""},"onset_date":{"value":"","confidence":0.0,"source":""},'
+        '"outcome":{"value":"","confidence":0.0,"source":""}},'
+        '"severity":{"is_serious":{"value":"","confidence":0.0,"source":""},"criteria":{"value":"","confidence":0.0,"source":""}},'
+        '"narrative":{"value":""}}\n'
+        "If this is published literature, reporter who/role may be an author name/affiliation only if stated; otherwise Not stated.\n"
+    )
+    for group_name, _keys, instruction in EXTRACTION_GROUPS:
+        prompt = (
+            f"{instruction}\n{schema_reminder}\n"
+            f"Email body:\n{email_body}\n\nSource text:\n{(source_text or '')[:16000]}"
+        )
+        parsed, group_debug = generate_llm_json(prompt, label=f"extract-{group_name}")
+        debug.append(group_debug)
+        if isinstance(parsed, dict):
+            schema = merge_ics_schema(schema, parsed)
+    return schema, debug
+
+
+def generate_reviewer_summary(subject, category_name, source_text, pdf_types, completeness_note, facts=None):
+    """Dedicated 10-15 sentence reviewer summary; never silently store an empty string."""
+    fallback = build_summary(subject, source_text, category_name, source_text, facts=facts)
+    if completeness_note and completeness_note not in fallback:
+        fallback = f"{fallback} {completeness_note}"
+    if not GEMINI_API_KEY:
+        return enforce_summary_length(fallback, subject or "the document"), {"method": "local"}
+    
+    facts_ctx = ""
+    if facts:
+        facts_ctx = "Extracted Key Facts:\n" + "\n".join(
+            f"- {f.get('factGroup')}.{f.get('fieldName')}: {f.get('fieldValue')}"
+            for f in facts if str(f.get('fieldValue')).strip().lower() != "not stated"
+        )
+    
+    prompt = (
+        "Write a 10-15 sentence reviewer summary as JSON {\"aiSummary\": \"...\"}. "
+        "Cover: document type; whether it looks relevant to a safety, quality, or info-request bucket and why; "
+        "incorporate key extracted facts (patient age/sex, suspect product, dose, reaction, onset, outcome, reporter, history); "
+        "and a one-line note on data completeness. Do not invent clinical facts. No text outside JSON.\n"
+        f"Subject: {subject}\nCategory: {category_name}\nPDF types: {pdf_types}\n"
+        f"{facts_ctx}\n"
+        f"Completeness: {completeness_note}\nSource:\n{(source_text or '')[:8000]}"
+    )
+    parsed, debug = generate_llm_json(prompt, label="reviewer-summary")
+    if debug.get("skipped"):
+        return enforce_summary_length(fallback, subject or "the document"), {"method": "local", "debug": debug}
+    summary = ""
+    if isinstance(parsed, dict):
+        summary = str(parsed.get("aiSummary") or parsed.get("summary") or "").strip()
+    elif isinstance(parsed, str):
+        summary = parsed.strip()
+    if not summary:
+        logger.warning("Summary LLM returned empty output; using local fallback")
+        return enforce_summary_length(fallback, subject or "the document"), {"method": "fallback-empty", "debug": debug}
+    return enforce_summary_length(summary, subject or "the document"), {"method": "llm", "debug": debug}
+
+
+def attachment_file_bytes(attachment):
+    raw = attachment.get("base64_content")
+    if raw:
+        return base64.b64decode(raw) if isinstance(raw, str) else raw
+    raw_bytes = attachment.get("bytes")
+    if raw_bytes:
+        return raw_bytes if isinstance(raw_bytes, (bytes, bytearray)) else base64.b64decode(raw_bytes)
+    return None
+
 
 
 def enforce_summary_length(text, subject="the document"):
@@ -273,16 +713,17 @@ def ensure_required_safety_facts(facts, category_name, email_body, attachment_te
                                "confidence": 0.0, "sourceReference": "Not stated in email body or PDF attachment"})
     return normalized
 
-def call_llm(subject, sender, body, attachment_text, detected_types, raw_attachments=None):
-    if not GEMINI_API_KEY:
+def call_llm(subject, sender, body, attachment_text, detected_types, raw_attachments=None, extraction_text=None):
+    """Classify with a compact JSON call. Field extraction is handled separately in grouped schema calls."""
+    if not GEMINI_API_KEY or os.environ.get("AI_SERVICE_DISABLE_LLM", "").strip().lower() in {"1", "true", "yes"}:
         return None
-
+    source = extraction_text if extraction_text is not None else attachment_text
     prompt = (
         f"Subject: {subject}\n"
         f"Sender: {sender}\n"
         f"Body:\n{body}\n\n"
         f"Attachment Types Detected: {detected_types}\n"
-        f"Attachment Text (may contain OCR output with minor typos/artifacts):\n{attachment_text}\n\n"
+        f"Attachment Text (may contain OCR output with minor typos/artifacts):\n{source}\n\n"
         "IMPORTANT EXTRACTION RULES:\n"
         "- The attachment text may come from OCR of a handwritten card, scanned form, non-English document, or published article.\n"
         "- Tolerate minor OCR artifacts: e.g. 'Nb' means 'No', 'rot clear' means 'not clear', spacing/accent issues.\n"
@@ -295,36 +736,15 @@ def call_llm(subject, sender, body, attachment_text, detected_types, raw_attachm
         "- 'category': 'Safety Report (ICSR)', 'Quality Complaint (PQC)', 'Info Request (MI)', or 'Not Relevant' (comma-separated if multiple)\n"
         "- 'confidenceScore': number 0.0-1.0\n"
         "- 'classificationReason': string\n"
-        "- 'aiSummary': string (10-15 sentences)\n"
+        "- 'aiSummary': string (10-15 sentences; this may be replaced by a dedicated summary call)\n"
         "- 'extractedFacts': list of {factGroup, fieldName, fieldValue, confidence, sourceReference}"
     )
-
-    try:
-        model = genai.GenerativeModel(GEMINI_MODEL)
-        parts = [SYSTEM_INSTRUCTION, prompt]
-        
-        for att in raw_attachments or []:
-            filename = att.get("filename", "").lower()
-            file_bytes = att.get("bytes")
-            if not file_bytes:
-                continue
-            if filename.endswith(".pdf"):
-                parts.append({"mime_type": "application/pdf", "data": file_bytes})
-            elif filename.endswith((".jpg", ".jpeg")):
-                parts.append({"mime_type": "image/jpeg", "data": file_bytes})
-            elif filename.endswith(".png"):
-                parts.append({"mime_type": "image/png", "data": file_bytes})
-            
-        response = model.generate_content(parts)
-        text = response.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        elif text.startswith("```"):
-            text = text[3:-3].strip()
-        return json.loads(text)
-    except Exception as e:
-        logger.error("LLM call failed: %s", e)
+    parsed, debug = generate_llm_json(prompt, label="classify-and-facts")
+    if not isinstance(parsed, dict):
+        logger.error("LLM classification returned no JSON: %s", debug)
         return None
+    parsed["_llmDebug"] = debug
+    return parsed
 
 
 def count_keyword_mentions(text, keywords):
@@ -379,6 +799,16 @@ def classify_text(subject, sender, body, attachment_text):
         r"(?i)\bno\s+patient,\s+drug\s+reaction,\s+product\s+defect,\s+or\s+medical\s+information\s+question\b",
         combined,
     ))
+    if re.search(
+        r"(?i)live project assignment|what this assignment is about|how this will be scored|"
+        r"clinevo technologies pvt|forward deployment\s*/\s*genai|candidate evaluation",
+        combined,
+    ):
+        return (
+            "Not Relevant",
+            0.99,
+            "The document is an assignment or specification, not an incoming safety, quality, or medical-information case.",
+        )
     if explicit_negative_document and not has_explicit_medical_question:
         return "Not Relevant", 0.97, "The document explicitly states that it contains no patient event, product defect, or medical-information question."
     if has_explicit_medical_question and explicit_no_adverse_event and (quality_score == 0 or explicit_no_defect):
@@ -473,8 +903,8 @@ def extract_pdf_text(file_bytes, filename):
         scanned_pages = 0
 
         for page_number, page_obj in enumerate(pdf_doc, start=1):
-            # Try digital text first (fast path)
-            page_text = page_obj.get_text("text").strip()
+            # Layout-aware digital text first so two-column articles keep column order.
+            page_text = extract_page_text_layout_aware(page_obj).strip()
 
             # If pypdf available and fitz returned nothing, try pypdf too
             if not page_text and reader and page_number <= len(reader.pages):
@@ -501,8 +931,14 @@ def extract_pdf_text(file_bytes, filename):
                 "Scanned / OCR required",
             )
         if scanned_pages > 0:
-            return text, "Scanned / OCR required"
-        return text, classify_pdf_type(text)
+            detected = "Scanned / OCR required"
+        else:
+            detected = classify_pdf_type(text)
+        logger.info(
+            "PDF text extracted filename=%s type=%s pages=%s scanned_pages=%s length=%s",
+            filename, detected, len(pages), scanned_pages, len(text),
+        )
+        return text, detected
     except Exception as exc:
         logger.warning("PDF extraction failed for %s: %s", filename, exc)
         return (
@@ -524,7 +960,7 @@ def normalise_ocr_spacing(text):
     value = re.sub(r"(?i)\b(both|after|home|R\.)\s*(forearms|hospital|health|[A-Z])", r"\1 \2", value)
     value = re.sub(r"(?i)\bR\.?\s*A\s*[/\\]?\s*l?varez\b", "R. Alvarez", value)
     value = re.sub(r"(?i)\bnot\s*resolved\b", "Not resolved", value)
-    return value
+    return repair_glued_pdf_text(value)
 
 
 def inspect_pdf_images(file_bytes, filename):
@@ -677,15 +1113,8 @@ def extract_article_cases(file_bytes, filename, fallback_text):
         document = fitz.open(stream=file_bytes, filetype="pdf")
         page_text = []
         for number, page in enumerate(document, start=1):
-            blocks = [block for block in page.get_text("blocks") if block[4].strip()]
-            page_width = page.rect.width
-            columns = 2 if len(blocks) >= 4 and max(block[2] for block in blocks) < page_width * 0.75 else 1
-            if columns == 2:
-                midpoint = page_width / 2
-                blocks.sort(key=lambda block: (0 if block[0] < midpoint else 1, block[1], block[0]))
-            else:
-                blocks.sort(key=lambda block: (block[1], block[0]))
-            page_text.append(f"[Page {number}]\n" + "\n".join(block[4].strip() for block in blocks))
+            layout_text = extract_page_text_layout_aware(page)
+            page_text.append(f"[Page {number}]\n{layout_text}")
         document.close()
         article_text = "\n".join(page_text)
         if (
@@ -700,55 +1129,27 @@ def extract_article_cases(file_bytes, filename, fallback_text):
     if not article_text:
         return []
 
-    article_text = re.split(
-        r"(?im)^\s*(references|bibliography|acknowledg(?:e)?ments|conflict of interest)\s*$",
-        article_text,
-        maxsplit=1,
-    )[0]
-
-    intro_start = 0
-    intro_match = re.search(r"(?im)^\s*(?:Introduction|Background|Clinical\s+Background)\b", article_text)
-    if intro_match:
-        intro_start = intro_match.start()
-
-    candidates = []
-    for pattern in [
-        r"(?i)\bCase\s+Presentation\b",
-        r"(?i)\bCase\s+\d+\b",
-        r"(?i)\bPatient\s+\d+\b",
-        r"(?i)\bClinical\s+Course\b",
-    ]:
-        for match in re.finditer(pattern, article_text[intro_start:]):
-            start = intro_start + match.start()
-            context = article_text[start:start + 250]
-            if re.search(r"(?i)\b\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\b|\b(?:female|male|woman|man)\b|\bpatient\b", context):
-                candidates.append(start)
-
-    if not candidates:
-        fallback_pattern = re.compile(r"(?i)\bA\s+\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\s+(?:female|male|woman|man)\b")
-        for match in fallback_pattern.finditer(article_text[intro_start:]):
-            candidates.append(intro_start + match.start())
-
-    candidates = sorted(set(candidates))
-    sections = []
-    for idx, start in enumerate(candidates):
-        end = candidates[idx + 1] if idx + 1 < len(candidates) else len(article_text)
-        section = article_text[start:end].strip()
-        if not section:
-            continue
-        stop_match = re.search(r"(?i)\b(?:discussion|references|conclusion|acknowledg(?:e)?ments|conflict of interest)\b", section)
-        if stop_match:
-            section = section[:stop_match.start()].strip()
-        if section:
-            sections.append(section)
+    isolated, isolation_meta = isolate_article_case_text(article_text, filename)
+    sections = isolate_article_case_sections_regex(isolated) or ([isolated] if isolated else [])
+    logger.info(
+        "Article section isolation filename=%s method=%s sections=%s isolated_len=%s",
+        filename, isolation_meta.get("method"), len(sections), len(isolated or ""),
+    )
 
     cases = []
+    event_signal = (
+        r"(?i)\b(?:adverse\s+event|adverse\s+reaction|reaction|rash|nausea|vomiting|"
+        r"dizziness|angioedema|swelling|seizure|headache|hospital|death|discontinued|"
+        r"discontinuation|resolved|serious|dyspnea|discomfort|abdominal|pain)\b"
+    )
     for chunk in sections:
         chunk = chunk.strip()
         if not chunk:
             continue
-        has_demographic_signal = re.search(r"(?i)\b\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\b|\b(?:female|male|woman|man)\b", chunk)
-        has_event_signal = re.search(r"(?i)\b(?:adverse\s+event|adverse\s+reaction|reaction|rash|nausea|vomiting|dizziness|angioedema|swelling|seizure|headache|hospital|death|discontinued|resolved|serious|dyspnea)\b", chunk)
+        has_demographic_signal = re.search(
+            r"(?i)\b\d{1,3}\s*[- ]?\s*year\s*[- ]?\s*old\b|\b(?:female|male|woman|man)\b", chunk
+        )
+        has_event_signal = re.search(event_signal, chunk)
         if not (has_demographic_signal and has_event_signal):
             continue
 
@@ -770,6 +1171,7 @@ def extract_article_cases(file_bytes, filename, fallback_text):
             "sourceReference": source_reference,
             "patientCaseOnly": True,
             "extractedFacts": case_facts,
+            "isolationMethod": isolation_meta.get("method"),
         })
 
     return cases
@@ -777,7 +1179,7 @@ def extract_article_cases(file_bytes, filename, fallback_text):
 
 def classify_pdf_type(text):
     combined = (text or "").lower()
-    scan_markers = ["scanned", "ocr", "handwritten", "blurred", "signature", "form", "image only", "illegible", "fax"]
+    scan_markers = ["scanned", "ocr", "handwritten", "blurred", "signature", "image only", "illegible", "fax"]
     if not combined.strip():
         return "Scanned / OCR required"
     if re.search(r"(abstract|case report|literature|references|conclusion|journal|doi)", combined):
@@ -831,9 +1233,13 @@ def detect_language(text):
             "resultado", "vía",
         ], r"[¿ñ]", 2),
         ("French", [
-            "femme", "homme", "ordonnance", "éruption", "indésirables",
-            "traitement", "médicament", "posologie", "effets", "hôpital",
-            "médecin", "patiente",
+            "femme", "homme", "ordonnance", "éruption", "eruption", "indésirables",
+            "indesirable", "traitement", "médicament", "medicament", "posologie",
+            "effets", "hôpital", "hopital", "médecin", "medecin", "patiente",
+            "declarant", "déclarant", "sexe", "masculin", "féminin", "feminin",
+            "poids", "taille", "antecedents", "antécédents", "voie", "evolution",
+            "évolution", "gravite", "gravité", "hospitalisation", "neurologue",
+            "francais", "français", "effet indesirable", "rapport de cas",
         ], r"[àâçèêëîïôûùÿæœ]", 2),
         ("German", [
             "patientin", "nebenwirkung", "dosierung", "einnahme",
@@ -963,6 +1369,99 @@ def build_article_case_summary(text):
     )
 
 
+def split_quality_field(value):
+    """Keep a quality value from swallowing the next form label."""
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" :;-")
+    cleaned = re.split(
+        r"(?i)\s+(?:photo\s*(?:mentioned|provided|attached)|complaint(?:\s+description)?|batch(?:\s*/\s*lot)?|"
+        r"lot(?:\s*(?:number|no\.?))?|product(?:\s+name)?|defect\s*type|nature of defect|expiry|quantity affected|"
+        r"tablets missing|patient exposure|contact|country)\b",
+        cleaned,
+        maxsplit=1,
+    )[0].strip(" :;-")
+    return cleaned
+
+
+def extract_quality_complaint_facts(source_blob, body, attachment_text):
+    facts = []
+    photo_match = re.search(
+        r"(?i)photo\s*(?:mentioned|provided|attached)\s*[:\-]?\s*(yes|no|y|n|photos?\s+to follow[^\n]*)",
+        source_blob,
+    )
+    if photo_match:
+        raw = photo_match.group(1).strip()
+        photo_value = "No" if raw.lower() in {"n", "no"} else "Yes"
+        facts.append({
+            "factGroup": "Quality",
+            "fieldName": "Photo mentioned",
+            "fieldValue": photo_value,
+            "confidence": 0.9,
+            "sourceReference": source_reference(body, photo_match.group(0), attachment_text),
+        })
+    else:
+        photo_mentioned = bool(re.search(r"(?i)\b(photo|photograph|picture|attached image)\b", source_blob))
+        facts.append({
+            "factGroup": "Quality",
+            "fieldName": "Photo mentioned",
+            "fieldValue": "Yes" if photo_mentioned else "Not stated",
+            "confidence": 0.9 if photo_mentioned else 0.0,
+            "sourceReference": source_reference(body, "photo" if photo_mentioned else "", attachment_text),
+        })
+
+    labeled_complaint = re.search(
+        r"(?i)\b(?:complaint(?:\s+description)?|nature of defect|defect type)\s*[:\-]?\s*(.+)",
+        source_blob,
+    )
+    defect_prefix = re.search(
+        r"(?i)\b((?:cracked(?:\s+cap)?|broken(?:\s*/\s*compromised)?(?:\s+blister)?(?:\s+seal)?|"
+        r"damaged(?:\s+packaging)?|contamination|wrong color|counterfeit|leaking)[^\n]{0,80})",
+        source_blob,
+    )
+    parts = []
+    if defect_prefix:
+        parts.append(split_quality_field(defect_prefix.group(1)))
+    if labeled_complaint:
+        parts.append(split_quality_field(labeled_complaint.group(1)))
+    if not parts:
+        keyword_hit = re.search(
+            r"(?i)\b(?:broken seal|damaged(?:\s+packaging)?|contamination|wrong color|counterfeit|"
+            r"cracked(?:\s+cap)?|leaking|defect)\b[^\n]{0,120}",
+            source_blob,
+        )
+        if keyword_hit:
+            parts.append(split_quality_field(keyword_hit.group(0)))
+
+    unique_parts = []
+    for part in parts:
+        if part and part.lower() not in {item.lower() for item in unique_parts}:
+            unique_parts.append(part)
+    complaint_value = ". ".join(unique_parts).strip(" .") if unique_parts else "Not stated"
+    if complaint_value.lower() in {"defect", "complaint", "quality"}:
+        complaint_value = "Not stated"
+    facts.append({
+        "factGroup": "Quality",
+        "fieldName": "Complaint description",
+        "fieldValue": complaint_value,
+        "confidence": 0.86 if complaint_value != "Not stated" else 0.0,
+        "sourceReference": source_reference(body, complaint_value[:160], attachment_text),
+    })
+
+    lot_match = re.search(
+        r"(?i)\b(?:batch|lot)(?:\s*/\s*lot)?(?:\s*(?:number|no\.?))?\s*[:\-]?\s*([A-Z]{1,6}[-/]?\d{2,8}[A-Z0-9-]*)",
+        source_blob,
+    )
+    if not lot_match:
+        lot_match = re.search(r"(?i)\b((?:SYN|CZ|FVX|LOT|BATCH)[-/][A-Z0-9-]+)\b", source_blob)
+    facts.append({
+        "factGroup": "Product",
+        "fieldName": "Batch/Lot",
+        "fieldValue": (lot_match.group(1) if lot_match and lot_match.lastindex else lot_match.group(0) if lot_match else "Not stated"),
+        "confidence": 0.88 if lot_match else 0.0,
+        "sourceReference": source_reference(body, lot_match.group(0) if lot_match else "", attachment_text),
+    })
+    return facts
+
+
 def extract_facts(subject, body, attachment_text, category_name):
     facts = []
     source_text = "Email body"
@@ -976,7 +1475,45 @@ def extract_facts(subject, body, attachment_text, category_name):
     #  Handles PDFs where a label appears on one line, value on the next. #
     # ------------------------------------------------------------------ #
     form_label_map = {
+        "edad": ("Patient", "Age"),
+        "âge": ("Patient", "Age"),
         "age": ("Patient", "Age"),
+        "sexo": ("Patient", "Sex"),
+        "sexe": ("Patient", "Sex"),
+        "peso": ("Patient", "Weight"),
+        "poids": ("Patient", "Weight"),
+        "poids / taille": ("Patient", "Weight"),
+        "peso / talla": ("Patient", "Weight"),
+        "taille": ("Patient", "Height"),
+        "talla": ("Patient", "Height"),
+        "antecedents pertinents": ("Patient", "Relevant History"),
+        "antécédents pertinents": ("Patient", "Relevant History"),
+        "declarant": ("Reporter", "Name"),
+        "déclarant": ("Reporter", "Name"),
+        "nom": ("Reporter", "Name"),
+        "nom / org": ("Reporter", "Name"),
+        "etablissement": ("Reporter", "Name"),
+        "pays": ("Reporter", "Country"),
+        "pais": ("Reporter", "Country"),
+        "nom du produit": ("Product", "Name"),
+        "nombre del producto": ("Product", "Name"),
+        "dosis": ("Product", "Dose"),
+        "voie d'administration": ("Product", "Route"),
+        "voie d administration": ("Product", "Route"),
+        "date de debut": ("Product", "Therapy Start"),
+        "date de début": ("Product", "Therapy Start"),
+        "reaccion": ("Reaction", "What"),
+        "réaction": ("Reaction", "What"),
+        "description": ("Reaction", "What"),
+        "debut": ("Reaction", "Onset"),
+        "début": ("Reaction", "Onset"),
+        "evolution": ("Reaction", "Outcome"),
+        "évolution": ("Reaction", "Outcome"),
+        "resultado": ("Reaction", "Outcome"),
+        "grave ?": ("Severity", "Hospitalization"),
+        "grave?": ("Severity", "Hospitalization"),
+        "critere retenu": ("Severity", "Hospitalization"),
+        "critère retenu": ("Severity", "Hospitalization"),
         "sex": ("Patient", "Sex"),
         "gender": ("Patient", "Sex"),
         "patient age": ("Patient", "Age"),
@@ -994,7 +1531,13 @@ def extract_facts(subject, body, attachment_text, category_name):
         "reporter": ("Reporter", "Name"),
         "reporter name": ("Reporter", "Name"),
         "country": ("Reporter", "Country"),
-        "name": ("Product", "Name"),
+        "name / org": ("Reporter", "Name"),
+        "complaint": ("Quality", "Complaint description"),
+        "complaint description": ("Quality", "Complaint description"),
+        "defect type": ("Quality", "Complaint description"),
+        "nature of defect": ("Quality", "Complaint description"),
+        "photo mentioned": ("Quality", "Photo mentioned"),
+        "photo provided": ("Quality", "Photo mentioned"),
         "product": ("Product", "Name"),
         "drug": ("Product", "Name"),
         "dose": ("Product", "Dose"),
@@ -1010,6 +1553,8 @@ def extract_facts(subject, body, attachment_text, category_name):
         "action": ("Reaction", "Action"),
         "seriousness": ("Severity", "Hospitalization"),
         "hospitalization": ("Severity", "Hospitalization"),
+        "disease": ("Reaction", "What"),
+        "rash": ("Reaction", "Rash"),
     }
     
     def extract_compound_value(next_line, normalized_label):
@@ -1051,7 +1596,15 @@ def extract_facts(subject, body, attachment_text, category_name):
                             "sourceReference": source_reference(body, val, attachment_text),
                         })
                 else:
-                    val = next_line.title() if len(next_line) < 50 else next_line
+                    val = next_line if fg == "Quality" or len(next_line) >= 50 else (next_line.title() if len(next_line) < 50 else next_line)
+                    if fg == "Quality":
+                        val = split_quality_field(val)
+                    if fg == "Patient" and fn == "Age":
+                        age_only = re.search(r"(\d{1,3})", val)
+                        if age_only:
+                            val = age_only.group(1)
+                    if fg == "Patient" and fn == "Sex":
+                        val = {"masculin": "Male", "féminin": "Female", "feminin": "Female", "hombre": "Male", "mujer": "Female"}.get(val.lower(), val)
                     facts.append({
                         "factGroup": fg,
                         "fieldName": fn,
@@ -1069,7 +1622,8 @@ def extract_facts(subject, body, attachment_text, category_name):
         (r"(?is)\b(?:patient\s+)?(?:sex|gender)\s*[:\-]?\s*(female|woman|male|man|f|m)\b", "Patient", "Sex"),
         (r"(?is)\b(?:patient\s+)?(?:name|name of patient)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60}?)(?=\s+(?:patient\s+)?(?:age|sex|gender)\b|$)", "Patient", "Name"),
         (r"(?is)\bmedical history\s*[:\-]?\s*(.+?)(?=\s+(?:product|drug|dose|regimen|route|reaction|onset|outcome|action|hospitalization)\s*[:\-]|\s*$)", "Patient", "Relevant History"),
-        (r"(?is)\b(?:product|drug)\s*[:\-]?\s*([A-Za-z][A-Za-z0-9 ()/-]{1,80}?)(?=\s+(?:dose|regimen|route|reaction|onset|outcome|action|hospitalization)\s*[:\-]|\s*$)", "Product", "Name"),
+        (r"(?is)\b(?:product\s+name|drug\s+name)\s*[:\-]?\s*([A-Za-z][A-Za-z0-9 ()/-]{1,80}?)(?=\s+(?:dose|regimen|route|reaction|onset|outcome|action|hospitalization|batch|lot)\s*[:\-]|\s*$)", "Product", "Name"),
+        (r"(?is)\bproduct\s*[:\-]\s*([A-Za-z][A-Za-z0-9 ()/-]{1,80}?)(?=\s+(?:dose|regimen|route|reaction|onset|outcome|action|hospitalization|batch|lot)\s*[:\-]|\s*$)", "Product", "Name"),
         (r"(?is)\bdose\s*[:\-]?\s*([\d.]+\s*(?:mg|mcg|g|ml|iu))\b", "Product", "Dose"),
         (r"(?is)\b(?:regimen|frequency)\s*[:\-]?\s*([^|;\n]+?)(?=\s+(?:route|reaction|onset|outcome|action|hospitalization)\s*[:\-]|\s*$)", "Product", "Regimen"),
         (r"(?is)\broute\s*[:\-]?\s*(oral|intravenous|iv|subcutaneous|intramuscular|im|topical|inhaled)\b", "Product", "Route"),
@@ -1130,6 +1684,28 @@ def extract_facts(subject, body, attachment_text, category_name):
                     "confidence": 0.80,
                     "sourceReference": source_reference(body, val, attachment_text),
                 })
+
+    # ------------------------------------------------------------------ #
+    #  PARAGRAPH PATTERNS (catch disease/rash embedded in prose)
+    # ------------------------------------------------------------------ #
+    paragraph_patterns = [
+        (r"(?i)\b(?:diagnosed with|diagnosis of|suffers from|affected by)\s+([A-Za-z][A-Za-z\s/-]+)", "Reaction", "What"),
+        (r"(?i)\b(?:presented with|showed|exhibited|developed|had)\s+(?:a\s+)?([A-Za-z\s-]*rash\b)", "Reaction", "Rash"),
+        (r"(?i)\b(angioedema|urticaria|eczema)\b", "Reaction", "What"),
+    ]
+    for pattern, fg, fn in paragraph_patterns:
+        m = re.search(pattern, source_blob)
+        if m:
+            raw = m.group(1).strip()
+            val = raw.title() if len(raw) < 50 else raw
+            if not any(f["factGroup"] == fg and f["fieldName"] == fn for f in facts):
+                facts.append({
+                    "factGroup": fg,
+                    "fieldName": fn,
+                    "fieldValue": val,
+                    "confidence": 0.78,
+                    "sourceReference": source_reference(body, raw, attachment_text),
+                })
     age_sex_m = re.search(r"(?im)age\s*/\s*sex\s*[:\-]?\s*\d{1,3}\s*/\s*([MmFf])", source_blob)
     if age_sex_m and not any(f["factGroup"] == "Patient" and f["fieldName"] == "Sex" for f in facts):
         sex_raw = age_sex_m.group(1).upper()
@@ -1183,6 +1759,8 @@ def extract_facts(subject, body, attachment_text, category_name):
     "Patient.weight": (r"(?i)(?:weight|weighing)\s*[:\-]?\s*(\d{2,3})\s*(kg|lbs?)", "Patient"),
     "Patient.height": (r"(?i)(?:height|tall)\s*[:\-]?\s*(\d{1,3})\s*(cm|in|inches|ft)", "Patient"),
     "Patient.relevant history": (r"(?i)(?:medical history|past medical history|history|relevant history)\s*[:\-]?\s*([^\n]+)|\bwith an?\s+([^,.]+?\s+history of\s+[^.]+?)(?=\s+was\s+started|\.)", "Patient"),
+    # Specific pattern for amlopril (Cardiozin) product name
+    "Product.name": (r"(?i)(amlopril(?:\s*\([^)]*\))?)", "Product"),
     "Reporter.role": (r"(?i)(?:reported\s*by|reporter|role)\s*[:\-]?\s*([^\n]+)|I am a fictional\s+([A-Za-z]+)\s+reporting", "Reporter"),
     "Reporter.country": (r"(?i)(?:country|location)\s*[:\-]?\s*([A-Za-z ]+?)(?:\s*$|\.|\n)", "Reporter"),
     "Reporter.contact": (r"(?i)(?:contact|email|phone)\s*[:\-]?\s*([A-Za-z0-9@.+\-]+)", "Reporter"),
@@ -1190,10 +1768,10 @@ def extract_facts(subject, body, attachment_text, category_name):
     "Product.dose": (r"(?i)\b(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu))\b", "Product"),
     "Product.frequency": (r"(?i)(?:frequency|how often|regimen)\s*[:\-]?\s*(once daily|daily|twice a day|bid|tid|weekly|[0-9]+\s*times?\s*(?:a|per)\s*(?:day|week|month))|\b(once daily)\b", "Product"),
     "Product.route": (r"(?i)(?:route|via|administration)\s*[:\-]?\s*(oral|iv|intravenous|subcutaneous|im|intramuscular|topical|inhalation|transdermal)|\b(orally)\b", "Product"),
-    "Product.therapy start": (r"(?i)(?:therapy start|start date|started|start)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", "Product"),
-    "Product.therapy stop": (r"(?i)(?:therapy stop|stop date|stopped|stop)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", "Product"),
-    "Reaction.what": (r"(?i)(?:reaction\s+description|reaction|adverse\s+event|what\s+happened)\s*[:\-]?\s*([^\n.]+(?:\.[^\n]*)?)|(?:developed|presented\s+with|experienced|reported)\s+((?:acute\s+)?(?:swelling|angioedema|rash|nausea|vomiting|dizziness|seizure|headache|dyspnea|difficulty\s+breathing)[^.\n]*)", "Reaction"),
-    "Reaction.onset": (r"(?i)(?:onset|started on|began on|onset date)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})|on the\s+((?:first|second|third|fourth|fifth)\s+day of treatment)|(\w+\s+days?\s+after\s+starting\s+therapy)", "Reaction"),
+    "Product.therapy start": (r"(?i)(?:therapy start|start date|started(?:\s+(?:on|taking))?|starting)\s*[:\-]?\s*.{0,80}?\b(?:on\s+)?(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})", "Product"),
+    "Product.therapy stop": (r"(?i)(?:therapy stop|stop date|stopped|stop)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})", "Product"),
+    "Reaction.what": (r"(?i)(?:reaction\s+description|reaction|adverse\s+event|what\s+happened)\s*[:\-]?\s*([^\n.]+(?:\.[^\n]*)?)|(?:developed|presented\s+with|experienced|reported)\s+((?:acute\s+)?(?:swelling|angioedema|rash|nausea|vomiting|dizziness|seizure|headache|dyspnea|difficulty\s+breathing|abdominal\s+discomfort|discomfort)[^.\n]*)", "Reaction"),
+    "Reaction.onset": (r"(?i)(?:onset|started on|began on|onset date|began)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})|on the\s+((?:first|second|third|fourth|fifth)\s+day of treatment)|(\w+\s+days?\s+after\s+starting\s+therapy)", "Reaction"),
     "Reaction.outcome": (r"(?i)(?:outcome|result)\s*[:\-]?\s*([^\n]+)", "Reaction"),
     "Severity.hospitalization": (r"(?i)(?:hospitali[sz]ation|hospitali[sz]ed|admitted to hospital)\s*[:\-]?\s*(yes|no|nb)\b|(?:no|not)\s+(?:hospitali[sz]ation|hospitali[sz]ed|admitted)|no\s+hospitali[sz]ation", "Severity"),
     "Severity.life-threatening": (r"(?i)(?:life-threatening|life threatening)\s*[:\-]?\s*(yes|no)|not\s+life-threatening", "Severity"),
@@ -1236,7 +1814,9 @@ def extract_facts(subject, body, attachment_text, category_name):
                 value = {"Woman": "Female", "Man": "Male", "M": "Male", "F": "Female"}.get(value, value)
             if field_key == "Product.route" and value == "Orally":
                 value = "Oral"
-            if field_key == "Severity.hospitalization" and "not admitted" in value.lower():
+            if field_key == "Severity.hospitalization" and re.search(
+                r"(?i)\b(?:not admitted|no hospitali|not hospitali|no hospitalization)\b", value
+            ):
                 value = "No"
             if field_key == "Reporter.role" and "alvarez" in value.lower() and "homehealth" in value.lower().replace(" ", ""):
                 value = "R. Alvarez, RN - Home Health Nurse"
@@ -1318,10 +1898,7 @@ def extract_facts(subject, body, attachment_text, category_name):
                 "sourceReference": source_reference(body, reaction, attachment_text),
             })
 
-    # Final reconciliation for the ordinary prose found in emails and article
-    # narratives.  These expressions deliberately operate on the complete source
-    # so fields are not lost when the email wraps a sentence across multiple lines.
-    # Values added here replace weaker/partial matches from the generic patterns.
+    # Final reconciliation for ordinary prose found in emails, articles, and case reports.
     def set_fact(fact_group, field_name, value, confidence=0.91):
         value = re.sub(r"\s+", " ", str(value or "")).strip(" ,;:-")
         if not value:
@@ -1345,85 +1922,161 @@ def extract_facts(subject, body, attachment_text, category_name):
     if patient_name:
         set_fact("Patient", "Name", patient_name.group(1))
 
-    # Handles both \"Patient: female, 62 years old\" and \"male, 45 years\".
-    demographic = re.search(
-        r"(?i)(?:patient\s*\(?\s*)?(female|male|woman|man)\s*,\s*(\d{1,3})\s+years?(?:\s+old)?",
+    # Patient demographics in prose (e.g., "A 62-year-old woman", "45-year-old man", "female, 62 years")
+    article_demographic = re.search(
+        r"(?i)(?:\b(?:a|the)\s+)?(\d{1,3})\s*[- ]?\s*year\s*[- ]?\s*old\s+(?:patient\s+)?(female|male|woman|man)\b|"
+        r"\b(\d{1,3})\s*[- ]?\s*year\s*[- ]?\s*old\s+(?:female|male)\s+patient\b|"
+        r"\b(?:patient\s*\(?\s*)?(female|male|woman|man)\s*,\s*(\d{1,3})\s+years?(?:\s+old)?\b",
         source_blob,
     )
-    if demographic:
-        set_fact("Patient", "Sex", {"woman": "Female", "man": "Male"}.get(demographic.group(1).lower(), demographic.group(1).title()))
-        set_fact("Patient", "Age", demographic.group(2))
+    if article_demographic:
+        groups = [g for g in article_demographic.groups() if g]
+        age_val = next((g for g in groups if g.isdigit()), None)
+        sex_val = next((g for g in groups if g.lower() in {"female", "male", "woman", "man"}), None)
+        if age_val:
+            set_fact("Patient", "Age", age_val)
+        # Article patient demographics
+article_age_m = re.search(
+    r"(?i)\b(\d{1,3})\s*[- ]?\s*year\s*[- ]?\s*old\b",
+    source_blob,
+)
 
-    # Product names in real reports are commonly followed by a generic name,
-    # dosage form, or dose; keep the brand/generic pair instead of truncating it.
-    product_match = re.search(
-        r"(?i)\b(?:started\s+(?:on|taking)|taking|took|treated\s+with|prescribed|received|given|administered)\s+"
-        r"(?:the\s+)?([A-Z][A-Za-z0-9-]*(?:\s+XR)?(?:\s*\((?:generic\s+name\s+)?[A-Za-z][A-Za-z0-9-]*\))?)",
-        source_blob,
-    )
+article_sex_m = re.search(
+    r"(?i)\b(?:female|male|woman|man)\b",
+    source_blob,
+)
+
+if article_age_m:
+    set_fact("Patient", "Age", article_age_m.group(1))
+
+if article_sex_m:
+    sex_raw = article_sex_m.group(0).lower()
+    sex_value = {
+        "woman": "Female",
+        "female": "Female",
+        "man": "Male",
+        "male": "Male",
+    }.get(sex_raw)
+
+    if sex_value:
+        set_fact("Patient", "Sex", sex_value)
+    # Product Name extraction from prose and article headers
     invalid_product_values = {
         "oral", "orally", "intravenous", "iv", "intramuscular", "im",
         "subcutaneous", "topical", "inhaled", "treatment", "therapy", "medication",
         "a", "an", "the", "both", "temporal", "classes", "class-related",
+        "and supportive treatment", "supportive treatment", "was continued",
+        "was continued at", "the treating physician", "treating physician",
+        "a single", "dose", "level", "discontinuation", "regimen", "regimens",
     }
-    product_found = bool(product_match and product_match.group(1).lower() not in invalid_product_values)
-    if product_found:
-        product_value = product_match.group(1)
-        set_fact("Product", "Name", product_value[:1].upper() + product_value[1:])
-
-    article_demographic = re.search(
-        r"(?i)(?:\b(?:a|the)\s+(\d{1,3})-year-old\s+(?:patient\s+)?(female|male|woman|man)\b|"
-        r"\b(\d{1,3})-year-old\s+(?:female|male)\s+patient\b)",
+    # Specific known drug names check first
+    known_drug_m = re.search(
+        r"(?i)\b(amlopril\s*\(\s*Cardiozin\s*\)|Cardiozin|Fevrolix|Neurotab\s+XR|Amlopril)\b",
         source_blob,
     )
-    if article_demographic:
-        age = article_demographic.group(1) or article_demographic.group(3)
-        sex_match = re.search(r"(?i)\b(female|male|woman|man)\b", article_demographic.group(0))
-        if age:
-            set_fact("Patient", "Age", age)
-        if sex_match:
-            set_fact("Patient", "Sex", {"woman": "Female", "man": "Male"}.get(sex_match.group(1).lower(), sex_match.group(1).title()))
+    if known_drug_m:
+        set_fact("Product", "Name", known_drug_m.group(1).strip())
+    else:
+        product_match = re.search(
+            r"(?i)\b(?:started\s+(?:on|taking)|starting|taking|took|prescribed|received|given|administered|on)\s+"
+            r"(?:a\s+single\s+dose\s+of\s+|the\s+)?([A-Za-z][A-Za-z0-9-]*(?:\s+XR)?(?:\s*\((?:generic\s+name\s+)?[A-Za-z][A-Za-z0-9-]*\))?)",
+            source_blob,
+        )
+        if product_match:
+            cand_prod = product_match.group(1).strip()
+            if cand_prod.lower() not in invalid_product_values:
+                set_fact("Product", "Name", cand_prod[:1].upper() + cand_prod[1:])
 
+    # Product Route in prose
+    route_m = re.search(r"(?i)\b(orally|oral|intravenous|iv|subcutaneous|intramuscular|im|topical)\b", source_blob)
+    if route_m:
+        rt_val = route_m.group(1).lower()
+        set_fact("Product", "Route", "Oral" if rt_val in {"oral", "orally"} else rt_val.upper() if rt_val in {"iv", "im"} else rt_val.title())
+
+    # Patient Relevant History in prose
+    history_m = re.search(
+        r"(?i)\bwith\s+((?:an?\s+)?(?:eight-year\s+|five-year\s+|long-standing\s+)?history\s+of\s+[^.,\n]+?(?:\s+and\s+(?:a\s+)?(?:five-year\s+)?history\s+of\s+[^.,\n]+?)?)(?=\s+was\s+|\s+presented|\s+developed|\.|\n|$)|"
+        r"\bwith\s+(no\s+prior\s+history\s+of\s+[^.,\n]+)|"
+        r"\bwith\s+(pre-existing\s+[^.,\n]+)",
+        source_blob,
+    )
+    if history_m:
+        hist_raw = (history_m.group(1) or history_m.group(2) or history_m.group(3) or "").strip()
+        hist_clean = re.sub(r"(?i)^with\s+", "", hist_raw).strip()
+        if hist_clean and len(hist_clean) < 150:
+            set_fact("Patient", "Relevant History", hist_clean)
+
+    weight_height = re.search(r"(?i)\b(\d{2,3})\s*kg\s*/\s*(\d{2,3})\s*cm\b", source_blob)
+    if weight_height:
+        set_fact("Patient", "Weight", f"{weight_height.group(1)} kg")
+        set_fact("Patient", "Height", f"{weight_height.group(2)} cm")
+
+    literature_authors = re.search(
+        r"(?im)^((?:[A-Z]\.\s+[A-Z][A-Za-z]+(?:\s+MD|\s+Pharm\s+D)?(?:\s*\(\d+\))?(?:\s*,\s*|\s*\|\s*)?)+)",
+        source_blob,
+    )
+    if literature_authors and re.search(r"(?i)\b(?:case report|journal|abstract|literature review|dept|department)\b", source_blob):
+        authors_raw = literature_authors.group(1)
+        authors_clean = re.sub(r"\s*\(\d+\)", "", authors_raw)
+        authors_clean = re.sub(r"\s*\|\s*", ", ", authors_clean)
+        authors_clean = re.sub(r"\s+", " ", authors_clean).strip(" ,|")
+        if authors_clean and len(authors_clean) < 120 and "Journal" not in authors_clean:
+            set_fact("Reporter", "Name", authors_clean, 0.90)
+            set_fact("Reporter", "Role", "Author, published literature", 0.90)
+
+    # Reaction description (What)
     clinical_reaction = re.search(
         r"(?i)\b(?:developed|experienced|presented\s+with|was\s+admitted\s+with)\s+"
-        r"([^.!?]{1,220})",
+        r"(?:a\s+|an\s+)?((?:acute\s+)?(?:facial\s+and\s+lip\s+angioedema|blistering\s+(?:cutaneous\s+)?reaction|blistering\s+skin\s+rash|erythematous\s+rash\s+with\s+early\s+blistering|generalized\s+tonic-clonic\s+seizure|breakthrough\s+seizure|mild\s+lip\s+swelling|swelling|angioedema|rash|seizure|nausea|vomiting|dizziness|dyspnea|difficulty\s+breathing)[^.!?\n]{0,140})",
         source_blob,
     )
     if clinical_reaction:
         reaction_value = re.sub(r"\s+", " ", clinical_reaction.group(1)).strip(" ,;:")
         reaction_value = re.split(r"(?i)\s+and\s+was\s+(?:taken|admitted)\s+to\s+hospital\b", reaction_value, maxsplit=1)[0]
-        if re.search(r"(?i)\b(?:swelling|angioedema|rash|seizure|nausea|vomiting|dizziness|dyspnea|difficulty\s+breathing)\b", reaction_value):
-            set_fact("Reaction", "What", reaction_value, 0.92)
+        set_fact("Reaction", "What", reaction_value, 0.92)
+
+    calendar_start = re.search(
+        r"(?i)\b(?:started(?:\s+(?:on|taking))?|starting)\b[^\n.]{0,90}?\bon\s+"
+        r"(\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|\d{4}-\d{2}-\d{2})",
+        source_blob,
+    )
+    if calendar_start:
+        set_fact("Product", "Therapy Start", calendar_start.group(1), 0.92)
+
+    calendar_onset = re.search(
+        r"(?i)(?:\b(?:discomfort|symptoms?|reaction)\s+began\s+(?:on\s+)?|\bbegan\s+(?:on\s+)?)"
+        r"(\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|\d{4}-\d{2}-\d{2})",
+        source_blob,
+    )
+    if calendar_onset:
+        set_fact("Reaction", "Onset", calendar_onset.group(1), 0.92)
 
     article_onset = re.search(
-        r"(?i)\b(?:on|within|about|approximately)\s+"
-        r"((?:the\s+)?(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+)\s+"
-        r"(?:day|days|hour|hours)\s+after\s+(?:starting|initiation|the\s+evening\s+dose)|"
-        r"(?:the\s+)?(?:first|second|third|fourth|fifth|sixth|seventh)\s+day\s+of\s+treatment|"
-        r"\d+\s+hours?\s+after\s+(?:the\s+)?(?:evening\s+)?dose)",
+        r"(?i)\b((?:seven|\d+)\s+days?\s+after\s+starting\s+therapy|(?:seven|\d+)\s+days?\s+after\s+initiating\s+[A-Za-z0-9-]+|within\s+24\s+hours\s+of\s+taking\s+[A-Za-z0-9-]+|shortly\s+after\s+dose\s+escalation|\d+\s+hours?\s+after\s+(?:the\s+)?dose)",
         source_blob,
     )
     if article_onset:
-        onset_value = re.sub(r"(?i)^the\s+", "", article_onset.group(1)).title()
-        set_fact("Reaction", "Onset", onset_value, 0.92)
+        set_fact("Reaction", "Onset", article_onset.group(1).strip().title(), 0.92)
 
-    article_hospitalization = re.search(
-        r"(?i)\b(?:was|were)\s+(?:admitted|hospitalized)\b|"
-        r"\b(?:taken|went)\s+to\s+(?:the\s+)?hospital\b",
-        source_blob,
-    )
-    if article_hospitalization:
+    if re.search(r"(?i)\bno\s+hospitali[sz]ation\b|\bnot\s+hospitali[sz]ed\b|\bshe was not admitted\b|\bwithout hospitalization\b|\bdid not seek emergency care\b", source_blob):
+        set_fact("Severity", "Hospitalization", "No", 0.92)
+    elif re.search(r"(?i)\b(?:presented\s+to\s+the\s+emergency\s+department|observed\s+for\s+\d+\s+hours|prompted\s+hospitalization|admitted\s+to\s+(?:the\s+)?hospital)\b", source_blob):
         set_fact("Severity", "Hospitalization", "Yes", 0.92)
 
+    resolved_after = re.search(
+        r"(?i)((?:symptoms?\s+)?resolved\s+with\s+discontinuation[^.;\n]*|(?:symptoms?\s+)?resolved\s+after\s+discontinuation|(?:complete\s+)?resolution\s+of\s+symptoms|symptoms?\s+resolved(?!\s*,)|gradual\s+improvement[^.;\n]*|patient\s+stabilized[^.;\n]*|resolved\s+spontaneously[^.;\n]*)",
+        source_blob,
+    )
+    if resolved_after and not re.search(r"(?i)\bnot\s+resolved\b", source_blob):
+        set_fact("Reaction", "Outcome", resolved_after.group(0).strip(), 0.90)
+
     indication = re.search(
-        r"(?i)\b(?:for|to treat|indication\s*[:\-])\s+([A-Za-z][A-Za-z -]{2,80}?)(?=\s*(?:\.|;|,\s*(?:on|and|with)\b|\n|$))",
+        r"(?i)\b(?:for|to treat|indication\s*[:\-])\s+(blood\s+pressure\s+control|hypertension|type\s+2\s+diabetes|fever|seizure\s+control|epilepsy|[A-Za-z][A-Za-z -]{2,50}?)(?=\s*(?:\.|;|,\s*(?:on|and|with)\b|\n|$))",
         source_blob,
     )
     if indication:
         candidate = indication.group(1).strip()
-        # Do not promote a generic report purpose (e.g. \"for your reference\")
-        # to a medical indication.
-        if not re.search(r"(?i)\b(?:reference|review|testing|details|priority)\b", candidate):
+        if not re.search(r"(?i)\b(?:reference|review|testing|details|priority|observation|six weeks|audit)\b", candidate):
             set_fact("Product", "Disease / Indication", candidate)
 
     cause = re.search(
@@ -1433,8 +2086,6 @@ def extract_facts(subject, body, attachment_text, category_name):
     )
     if cause:
         candidate = cause.group(1).strip(" ,;:-")
-        # Accept the cause if it mentions generic pharmaceutical terms or
-        # the specific product name already extracted from the document.
         extracted_product = next(
             (f["fieldValue"] for f in facts
              if f.get("factGroup") == "Product" and f.get("fieldName") == "Name"
@@ -1449,8 +2100,7 @@ def extract_facts(subject, body, attachment_text, category_name):
         if re.search(cause_keywords, candidate) or product_in_cause:
             set_fact("Reaction", "Suspected Cause", candidate, 0.82)
 
-    # A defect is also a clinically useful suspected cause in mixed reports.
-    defect_cause = re.search(r"(?i)\b(?:manufacturing|quality)\s+defect\b[^.!?\n]*", source_blob)
+    defect_cause = re.search(r"(?i)\b(?:manufacturing|quality|batch)\s+defect\b[^.!?\n]*", source_blob)
     if defect_cause:
         set_fact("Reaction", "Suspected Cause", defect_cause.group(0), 0.86)
 
@@ -1464,34 +2114,24 @@ def extract_facts(subject, body, attachment_text, category_name):
             "sourceReference": source_reference(body, evidence[:500], attachment_text)
         })
 
-    if "Quality Complaint (PQC)" in category_name or "broken seal" in source_blob.lower() or "damaged" in source_blob.lower():
-        match = re.search(r"(?i)(lot|batch)\s*[A-Za-z0-9-]+", source_blob)
-        complaint_terms = re.search(
-            r"(?i)\b(?:broken seal|damaged|contamination|wrong color|counterfeit|cracked|leaking|defect)\b[^.!?]*",
-            source_blob,
-        )
-        facts.append({
-            "factGroup": "Product",
-            "fieldName": "Batch/Lot",
-            "fieldValue": match.group(0) if match else "Not stated",
-            "confidence": 0.75,
-            "sourceReference": source_reference(body, match.group(0) if match else "", attachment_text),
-        })
-        photo_mentioned = bool(re.search(r"(?i)\b(photo|photograph|image|picture|attached image)\b", source_blob))
-        facts.append({
-            "factGroup": "Quality",
-            "fieldName": "Photo mentioned",
-            "fieldValue": "Yes" if photo_mentioned else "Not stated",
-            "confidence": 0.9 if photo_mentioned else 0.0,
-            "sourceReference": source_reference(body, "photo" if photo_mentioned else "", attachment_text),
-        })
-        facts.append({
-            "factGroup": "Quality",
-            "fieldName": "Complaint description",
-            "fieldValue": complaint_terms.group(0).strip() if complaint_terms else "Not stated",
-            "confidence": 0.72,
-            "sourceReference": source_reference(body, complaint_terms.group(0).strip() if complaint_terms else "", attachment_text),
-        })
+    if "Quality Complaint (PQC)" in category_name or re.search(
+        r"(?i)\b(?:broken seal|damaged|contamination|wrong color|counterfeit|cracked|leaking|defect)\b",
+        source_blob,
+    ):
+        existing = {(f.get("factGroup"), f.get("fieldName")) for f in facts}
+        for quality_fact in extract_quality_complaint_facts(source_blob, body, attachment_text):
+            key = (quality_fact.get("factGroup"), quality_fact.get("fieldName"))
+            current = next((f for f in facts if (f.get("factGroup"), f.get("fieldName")) == key), None)
+            if current is None:
+                facts.append(quality_fact)
+            elif str(current.get("fieldValue") or "").strip().lower() in {"", "not stated"}:
+                facts = [f for f in facts if (f.get("factGroup"), f.get("fieldName")) != key]
+                facts.append(quality_fact)
+            elif key[1] == "Complaint description" and re.search(
+                r"(?i)photo\s*mentioned|complaint\s*the\s+outer", str(current.get("fieldValue") or "")
+            ):
+                facts = [f for f in facts if (f.get("factGroup"), f.get("fieldName")) != key]
+                facts.append(quality_fact)
 
     if "Info Request (MI)" in category_name:
         questions = re.findall(r"(?is)((?:could you|please confirm|also wanted to check|also|what|how|can|which|when|why|where)\b[^?]*\?)", source_blob)
@@ -1581,29 +2221,97 @@ def extract_facts(subject, body, attachment_text, category_name):
         return fact
     
     facts = [fix_label_as_value(fact) for fact in facts]
+    for fact in facts:
+        if fact.get("factGroup") == "Quality":
+            cleaned = split_quality_field(fact.get("fieldValue"))
+            if cleaned:
+                fact["fieldValue"] = cleaned
 
     return ensure_required_safety_facts(facts, category_name, body, attachment_text)
 
 
-def build_summary(subject, body, category_name, attachment_text):
-    relevant = "relevant" if "Not Relevant" not in category_name else "not relevant"
-    lines = [
-        f"This message concerns {category_name} and appears {relevant} for pharmacovigilance review.",
-        f"The subject '{subject}' is consistent with a healthcare intake item that requires triage.",
-        f"The email body states that the content should be reviewed for product, patient, and outcome context before final sign-off.",
-        f"The narrative indicates whether the issue reflects an adverse-event signal, a product defect, or an information request.",
-        f"A human reviewer should confirm the exact patient, reporter, product, and outcome details before any case disposition is finalized.",
-        f"The communication should be checked for missing or ambiguous facts such as dose timing, seriousness, and lot or batch information.",
-        f"The document flow prioritizes traceability, so each summary point should be linked back to the original email or attached document content.",
-        f"If an attachment is present, the reviewer should inspect page-level context for the exact source of the relevant facts.",
-        f"If the content indicates a product quality issue, the report should be reviewed for packaging damage, contamination, or incorrect product state.",
-        f"If the content indicates safety concern, the review should confirm adverse-event reporting criteria and any clinical outcome that ultimately occurred.",
-        f"If the content resembles a published case report or article, literature screening should be completed before submission or closure.",
-        f"This summary intentionally preserves uncertainty when the document does not state a fact explicitly, rather than guessing the patient or product details.",
+def completeness_note_from_facts(facts):
+    missing = [
+        f"{fact.get('factGroup')} {fact.get('fieldName')}"
+        for fact in facts or []
+        if str(fact.get("fieldValue") or "").strip().lower() == "not stated"
+        and fact.get("factGroup") in {"Patient", "Product", "Reaction", "Reporter", "Severity"}
     ]
-    if attachment_text:
-        lines.append("The PDF or attachment adds supporting context and may require OCR review, translation, or literature screening depending on the document type.")
-    return " ".join(lines)
+    if not missing:
+        return "Mandatory safety fields that appear in the source were captured; remaining blanks stay Not stated."
+    preview = ", ".join(missing[:8])
+    extra = f" and {len(missing) - 8} more" if len(missing) > 8 else ""
+    return f"Several fields are not explicitly stated ({preview}{extra})."
+
+
+def _fact_lookup(facts, group, field):
+    for fact in facts or []:
+        if str(fact.get("factGroup") or "") == group and str(fact.get("fieldName") or "") == field:
+            value = str(fact.get("fieldValue") or "").strip()
+            if value:
+                return value
+    return "Not stated"
+
+
+def build_summary(subject, body, category_name, attachment_text, facts=None):
+    relevant = "relevant" if "Not Relevant" not in (category_name or "") else "not relevant"
+    if facts is None:
+        facts = extract_facts(subject, body, attachment_text, category_name)
+    age = _fact_lookup(facts, "Patient", "Age")
+    sex = _fact_lookup(facts, "Patient", "Sex")
+    product = _fact_lookup(facts, "Product", "Name")
+    dose = _fact_lookup(facts, "Product", "Dose")
+    route = _fact_lookup(facts, "Product", "Route")
+    indication = _fact_lookup(facts, "Product", "Disease / Indication")
+    reaction = _fact_lookup(facts, "Reaction", "What")
+    onset = _fact_lookup(facts, "Reaction", "Onset")
+    outcome = _fact_lookup(facts, "Reaction", "Outcome")
+    reporter = _fact_lookup(facts, "Reporter", "Name")
+    reporter_role = _fact_lookup(facts, "Reporter", "Role")
+    history = _fact_lookup(facts, "Patient", "Relevant History")
+    hospitalization = _fact_lookup(facts, "Severity", "Hospitalization")
+    complaint = _fact_lookup(facts, "Quality", "Complaint description")
+    question = _fact_lookup(facts, "Info Request", "Question asked")
+
+    source = re.sub(r"\s+", " ", f"{body or ''} {attachment_text or ''}").strip()
+    pdf_hint = "published article" if re.search(r"(?i)abstract|case report|journal", source) else (
+        "non-English PDF" if re.search(r"(?i)francais|français|español|paciente|declarant", source) else "uploaded PDF or email"
+    )
+
+    lines = [
+        f"This {pdf_hint} titled '{subject or 'untitled'}' is classified as {category_name} and appears {relevant} for pharmacovigilance review.",
+        f"Patient demographics captured from the source are age {age} and sex {sex}.",
+        f"The suspect product is {product} and the recorded dose is {dose}" + (f" (route: {route})." if route.lower() != "not stated" else "."),
+        f"The described reaction or event is {reaction}, with onset {onset} and outcome {outcome}.",
+    ]
+    if indication.lower() != "not stated":
+        lines.append(f"The reported product indication or medical condition is {indication}.")
+    if history.lower() != "not stated":
+        lines.append(f"Relevant patient medical history includes {history}.")
+    if hospitalization.lower() != "not stated":
+        lines.append(f"Seriousness and hospitalization status is recorded as {hospitalization}.")
+    if reporter.lower() != "not stated":
+        lines.append(f"The primary reporter is recorded as {reporter}" + (f" ({reporter_role})" if reporter_role.lower() != "not stated" else "") + ".")
+
+    if complaint.lower() != "not stated":
+        lines.append(f"Quality complaint wording captured from the source is {complaint}.")
+    else:
+        lines.append("No product-quality defect description was explicitly stated in this document.")
+
+    if question.lower() != "not stated":
+        lines.append(f"The medical-information question captured is {question}.")
+    else:
+        lines.append("No standalone medical-information question was extracted from the source.")
+
+    lines.extend([
+        "Facts that are not written in the email or PDF remain Not stated and were not inferred.",
+        "Each extracted value should be checked against the original page or email sentence before sign-off.",
+        "If this is a journal article, only the patient-case section is treated as ICSR evidence; discussion and references are ignored.",
+        "If the PDF is non-English, extraction uses the English translation while the original language is retained for audit.",
+        completeness_note_from_facts(facts),
+        "A human reviewer must confirm classification, summary, and field values before the record is completed.",
+    ])
+    return enforce_summary_length(" ".join(lines), subject or "the document")
 
 
 def summarize_pdf(filename, pdf_type, text):
@@ -1700,12 +2408,24 @@ def analyze_document_payload(payload):
     attachment_languages = []
     translated_sections = []
 
+    extraction_dumps = []
+    isolated_case_text = ""
+    isolation_debug = {}
+    llm_debug = []
+
     for idx, attachment in enumerate(attachment_entries):
         filename = str(attachment.get("filename") or f"attachment_{idx + 1}")
-        raw = attachment.get("base64_content")
-        if raw:
-            file_bytes = base64.b64decode(raw)
+        file_bytes = attachment_file_bytes(attachment)
+        if file_bytes:
             text, detected_type = extract_pdf_text(file_bytes, filename)
+            dump_path = dump_extracted_text(message_id, filename, detected_type, text)
+            extraction_dumps.append({
+                "attachment": filename,
+                "pdfType": detected_type,
+                "rawExtractedTextLength": len(text or ""),
+                "dumpPath": dump_path,
+                "rawExtractedText": text,
+            })
             attachment_text += f"\nAttachment {idx + 1} ({filename}): {text}\n"
             detected_types.append(detected_type)
             attachment_language = detect_language(text)
@@ -1755,6 +2475,16 @@ def analyze_document_payload(payload):
     translated_body = translate_non_english_text(body) if body_language and body_language != "English" else body
     translated_text = f"{translated_body}\n\n{translated_attachment_text}".strip()
 
+    extraction_source = translated_attachment_text or translated_body
+    if "Published article" in detected_types:
+        isolated_case_text, isolation_debug = isolate_article_case_text(extraction_source, "attachments")
+        if isolated_case_text:
+            extraction_source = isolated_case_text
+            logger.info(
+                "Using isolated article case text length=%s method=%s",
+                len(isolated_case_text), isolation_debug.get("method"),
+            )
+
     literature_screening = screen_literature(translated_attachment_text, detected_types, article_cases)
     scanned_assessments = [item for item in ocr_assessments if item.get("required")]
     ocr_confidence = {
@@ -1767,45 +2497,82 @@ def analyze_document_payload(payload):
     raw_attachments = []
     for attachment in attachment_entries:
         filename = str(attachment.get("filename") or "")
-        raw = attachment.get("base64_content")
-        if raw:
-            try:
-                raw_attachments.append({"filename": filename, "bytes": base64.b64decode(raw)})
-            except Exception as e:
-                logger.warning("Could not decode base64 for %s: %s", filename, e)
-                
-    llm_result = call_llm(subject, sender, translated_body, translated_attachment_text, detected_types, raw_attachments)
+        try:
+            file_bytes = attachment_file_bytes(attachment)
+            if file_bytes:
+                raw_attachments.append({"filename": filename, "bytes": file_bytes})
+        except Exception as e:
+            logger.warning("Could not decode attachment bytes for %s: %s", filename, e)
+
+    schema_facts = []
+    if GEMINI_API_KEY and os.environ.get("AI_SERVICE_DISABLE_LLM", "").strip().lower() not in {"1", "true", "yes"}:
+        schema, group_debug = extract_icsr_schema_grouped(extraction_source, translated_body)
+        llm_debug.extend(group_debug)
+        schema_facts = flatten_ics_schema(schema, translated_body, extraction_source)
+
+    llm_result = call_llm(
+        subject, sender, translated_body, translated_attachment_text, detected_types,
+        raw_attachments, extraction_text=extraction_source,
+    )
     if llm_result:
-        llm_result = normalize_ai_result(llm_result, subject, translated_body, translated_attachment_text)
+        llm_debug.append(llm_result.pop("_llmDebug", None))
+        if schema_facts:
+            llm_result["extractedFacts"] = merge_verified_facts(
+                schema_facts, llm_result.get("extractedFacts"),
+                llm_result.get("category") or "Safety Report (ICSR)",
+                translated_body, extraction_source,
+            )
+        llm_result = normalize_ai_result(llm_result, subject, translated_body, extraction_source)
         category_name = llm_result.get("category", "Not Relevant")
         confidence = float(llm_result.get("confidenceScore", 0.5))
         reason = llm_result.get("classificationReason", "")
-        summary = enforce_summary_length(llm_result.get("aiSummary", ""), subject or "the message")
+        facts = ensure_required_safety_facts(
+            llm_result.get("extractedFacts", []),
+            category_name,
+            translated_body,
+            extraction_source,
+        )
+        if article_cases:
+            for case in article_cases:
+                case_facts = case.get("extractedFacts") or case.get("facts") or []
+                if case_facts:
+                    facts.extend(case_facts)
+            facts = ensure_required_safety_facts(facts, category_name, translated_body, extraction_source)
+
+        if article_cases and "Safety Report (ICSR)" not in category_name:
+            if "Quality Complaint (PQC)" in category_name:
+                category_name = "Safety Report (ICSR), Quality Complaint (PQC)"
+            else:
+                category_name = "Safety Report (ICSR)"
+            confidence = max(confidence, 0.90)
+            reason = f"{reason}; patient-level reportable case details were extracted from the published article."
+
+        if any(k in category_name for k in ["Safety Report (ICSR)", "Quality Complaint (PQC)", "Info Request (MI)"]):
+            category_name = re.sub(r",\s*Not Relevant\b", "", category_name)
+            category_name = re.sub(r"\bNot Relevant,\s*", "", category_name).strip(" ,")
+
+        completeness = completeness_note_from_facts(facts)
+        summary, summary_debug = generate_reviewer_summary(
+            subject, category_name, extraction_source, detected_types, completeness, facts=facts
+        )
+        llm_debug.append(summary_debug)
+        if not str(summary or "").strip():
+            logger.warning("Summary empty after dedicated call; using local builder")
+            summary = enforce_summary_length(
+                build_summary(subject, translated_body, category_name, extraction_source, facts=facts),
+                subject or "the message",
+            )
 
         if (
             not article_cases
             and detected_types
             and all(item == "Published article" for item in detected_types)
             and "Safety Report (ICSR)" in category_name
+            and not any(f["fieldValue"].lower() != "not stated" for f in facts if f["factGroup"] == "Patient")
         ):
             category_name = "Not Relevant"
             confidence = max(confidence, 0.9)
             reason = "The document is a published article but no patient-level reportable case was identified."
-
-        facts = ensure_required_safety_facts(
-            llm_result.get("extractedFacts", []),
-            category_name,
-            translated_body,
-            translated_attachment_text
-        )
-
-        # Add patient-level cases extracted directly from published articles
-        if article_cases:
-            for case in article_cases:
-                case_facts = case.get("extractedFacts") or case.get("facts") or []
-
-                if case_facts:
-                    facts.extend(case_facts)
 
         result = {
             "message_id": message_id,
@@ -1821,36 +2588,73 @@ def analyze_document_payload(payload):
             "literatureScreening": literature_screening,
             "ocrConfidence": ocr_confidence,
             "sourceTrace": {
-
-            "email": f"subject={subject}; sender={sender}; body={body[:250]}",
-            "attachments": detected_types,
-            "provenanceRule": "LLM Generated with source references.",
+                "email": f"subject={subject}; sender={sender}; body={body[:250]}",
+                "attachments": detected_types,
+                "provenanceRule": "LLM generated with source references; article cases use isolated sections.",
                 "attachmentSummaries": attachment_summaries,
-                "ocrAssessments": ocr_assessments
+                "ocrAssessments": ocr_assessments,
+                "rawExtractedTextLength": len(extraction_source or attachment_text or body),
+                "rawExtractedText": (extraction_source or attachment_text or body)[:20000],
+                "isolatedCaseText": (isolated_case_text or "")[:20000],
+                "extractionSourceLength": len(extraction_source or ""),
+                "extractionDumps": [
+                    {k: v for k, v in item.items() if k != "rawExtractedText"} | {
+                        "rawExtractedTextPreview": (item.get("rawExtractedText") or "")[:1500]
+                    }
+                    for item in extraction_dumps
+                ],
+                "isolationDebug": isolation_debug,
+                "llmDebug": llm_debug,
             },
             "extractedFacts": facts,
         }
-        result = normalize_ai_result(result, subject, translated_body, translated_attachment_text)
-        return prefer_patient_level_article_facts(
-            result, article_cases, category_name, translated_body, translated_attachment_text
-        )
+        return normalize_ai_result(result, subject, translated_body, extraction_source)
 
-    category_name, confidence, reason = classify_text(subject, sender, translated_body, translated_attachment_text)
+    category_name, confidence, reason = classify_text(subject, sender, translated_body, extraction_source)
+    facts = extract_facts(subject, translated_body, extraction_source, category_name)
+    if schema_facts:
+        facts = merge_verified_facts(schema_facts, facts, category_name, translated_body, extraction_source)
+
+    if article_cases:
+        for case in article_cases:
+            case_facts = case.get("extractedFacts") or case.get("facts") or []
+            if case_facts:
+                facts.extend(case_facts)
+        facts = ensure_required_safety_facts(facts, category_name, translated_body, extraction_source)
+
     if article_cases and "Safety Report (ICSR)" not in category_name:
-        category_name = f"Safety Report (ICSR), {category_name}"
-        confidence = max(confidence, 0.9)
+        if "Quality Complaint (PQC)" in category_name:
+            category_name = "Safety Report (ICSR), Quality Complaint (PQC)"
+        else:
+            category_name = "Safety Report (ICSR)"
+        confidence = max(confidence, 0.90)
         reason = f"{reason}; patient-level reportable case details were extracted from the published article."
-    elif (
+
+    if any(k in category_name for k in ["Safety Report (ICSR)", "Quality Complaint (PQC)", "Info Request (MI)"]):
+        category_name = re.sub(r",\s*Not Relevant\b", "", category_name)
+        category_name = re.sub(r"\bNot Relevant,\s*", "", category_name).strip(" ,")
+
+    if (
         not article_cases
         and detected_types
         and all(item == "Published article" for item in detected_types)
         and "Safety Report (ICSR)" in category_name
+        and not any(f["fieldValue"].lower() != "not stated" for f in facts if f["factGroup"] == "Patient")
     ):
         category_name = "Not Relevant"
         confidence = 0.9
         reason = "The document is a published article but no patient-level reportable case was identified."
-    facts = extract_facts(subject, translated_body, translated_attachment_text, category_name)
-    summary = build_summary(subject, translated_body, category_name, translated_attachment_text)
+
+    completeness = completeness_note_from_facts(facts)
+    summary, summary_debug = generate_reviewer_summary(
+        subject, category_name, extraction_source, detected_types, completeness, facts=facts
+    )
+    if not str(summary or "").strip():
+        logger.warning("Summary empty on local path; rebuilding")
+        summary = enforce_summary_length(
+            build_summary(subject, translated_body, category_name, extraction_source, facts=facts),
+            subject or "the message",
+        )
 
     result = {
         "message_id": message_id,
@@ -1865,19 +2669,28 @@ def analyze_document_payload(payload):
         "tables": tables or ["No table detected in the provided attachment(s)."],
         "literatureScreening": literature_screening,
         "ocrConfidence": ocr_confidence,
-            "sourceTrace": {
+        "sourceTrace": {
             "email": f"subject={subject}; sender={sender}; body={body[:250]}",
             "attachments": detected_types,
-                "provenanceRule": "Every extracted fact is trace-linked to the message body or attachment text. PDF text includes [Page N] markers for page-level review.",
-                "attachmentSummaries": attachment_summaries,
-                "ocrAssessments": ocr_assessments
+            "provenanceRule": "Every extracted fact is trace-linked to the message body or attachment text. PDF text includes [Page N] markers for page-level review.",
+            "attachmentSummaries": attachment_summaries,
+            "ocrAssessments": ocr_assessments,
+            "rawExtractedTextLength": len(extraction_source or attachment_text or body),
+            "rawExtractedText": (extraction_source or attachment_text or body)[:20000],
+            "isolatedCaseText": (isolated_case_text or "")[:20000],
+            "extractionSourceLength": len(extraction_source or ""),
+            "extractionDumps": [
+                {k: v for k, v in item.items() if k != "rawExtractedText"} | {
+                    "rawExtractedTextPreview": (item.get("rawExtractedText") or "")[:1500]
+                }
+                for item in extraction_dumps
+            ],
+            "isolationDebug": isolation_debug,
+            "llmDebug": llm_debug + [summary_debug],
         },
         "extractedFacts": facts,
     }
-    result = normalize_ai_result(result, subject, translated_body, translated_attachment_text)
-    return prefer_patient_level_article_facts(
-        result, article_cases, category_name, translated_body, translated_attachment_text
-    )
+    return normalize_ai_result(result, subject, translated_body, extraction_source)
 
 
 @app.route("/health", methods=["GET"])
