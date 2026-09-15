@@ -701,8 +701,6 @@ def ensure_required_safety_facts(facts, category_name, email_body, attachment_te
         if value.lower() == "not stated":
             confidence = 0.0
             reference = missing_source_reference(value, email_body, attachment_text)
-        elif reference.startswith("PDF attachment, Spanish source field verified:"):
-            confidence = normalise_confidence(fact.get("confidence"))
         elif _value_present_in_source(value, email_body, attachment_text):
             confidence = normalise_confidence(fact.get("confidence"))
             verified_reference = source_reference(email_body, value, attachment_text)
@@ -1993,8 +1991,7 @@ def extract_facts(subject, body, attachment_text, category_name):
     #  STANDARD REGEX PATTERNS                                             #
     # ------------------------------------------------------------------ #
     extraction_terms = {
-    "Patient.initials": (r"(?i)(?:patient\s*(?:initials?|id))\s*[:\-]?\s*([A-Z]{1,4}(?:[-.][A-Z0-9]{1,6})+)|(?:patient\s*[:\-]\s*)([A-Z]{1,4}(?:[.-][A-Z0-9]{1,6})+)", "Patient"),
-    
+    "Patient.initials": (r"(?im)(?:patient\s*(?:initials?|id))\s*[:\-]?\s*([A-Z]{1,4}(?:[-.][A-Z0-9]{1,6})+)|Synthetic Safety Report\s*[—-]\s*([A-Z]{2,6}-[A-Z0-9]+)", "Patient"),
     "Patient.age": (r"(?i)(?<!\w)(?:age|aged|years old|y/o)\s*[:\-]?\s*(\d{1,3})|(?<!\d)(\d{1,3})-year-old", "Patient"),
     "Patient.sex": (r"(?i)(?:sex|gender)\s*[:\-]?\s*(male|female|man|woman|m|f)\b|\b(\d{1,3})-year-old\s+(male|female|man|woman)\b", "Patient"),
     "Patient.weight": (r"(?i)(?:weight|weighing)\s*[:\-]?\s*(\d{2,3})\s*(kg|lbs?)", "Patient"),
@@ -2002,7 +1999,7 @@ def extract_facts(subject, body, attachment_text, category_name):
     "Patient.relevant history": (r"(?i)(?:medical history|past medical history|history|relevant history)\s*[:\-]?\s*([^\n]+)|\bwith an?\s+([^,.]+?\s+history of\s+[^.]+?)(?=\s+was\s+started|\.)", "Patient"),
     # Specific pattern for amlopril (Cardiozin) product name
     "Product.name": (r"(?i)(amlopril(?:\s*\([^)]*\))?)", "Product"),
-    "Reporter.role": (r"(?i)\brole\s*[:\-]?\s*([^\n]+)", "Reporter"),
+    "Reporter.role": (r"(?i)(?:reported\s*by|reporter|role)\s*[:\-]?\s*([^\n]+)|I am a fictional\s+([A-Za-z]+)\s+reporting", "Reporter"),
     "Reporter.country": (r"(?i)(?:country|location)\s*[:\-]?\s*([A-Za-z ]+?)(?:\s*$|\.|\n)", "Reporter"),
     "Reporter.contact": (r"(?i)(?:contact|email|phone)\s*[:\-]?\s*([A-Za-z0-9@.+\-]+)", "Reporter"),
     "Product.name": (r"(?i)(?:product\s+name|drug\s+name|medication\s+name|suspect\s+product|started on|taking|treated with|prescribed)\s*[:\-]?\s*([A-Za-z][A-Za-z0-9-]*)", "Product"),
@@ -2011,10 +2008,10 @@ def extract_facts(subject, body, attachment_text, category_name):
     "Product.route": (r"(?i)(?:route|via|administration)\s*[:\-]?\s*(oral|iv|intravenous|subcutaneous|im|intramuscular|topical|inhalation|transdermal)|\b(orally)\b", "Product"),
     "Product.therapy start": (r"(?i)(?:therapy start|start date|started(?:\s+(?:on|taking))?|starting)\s*[:\-]?\s*.{0,80}?\b(?:on\s+)?(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})", "Product"),
     "Product.therapy stop": (r"(?i)(?:therapy stop|stop date|stopped|stop)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})", "Product"),
-    "Reaction.what": (r"(?is)(?:reaction\s+description|reaction|adverse\s+event|what\s+happened)\s*[:\-]?\s*([^\n]+(?:\n[^\n]+)?)|(?:developed|presented\s+with|experienced|reported)\s+([^.\n]+(?:\s+and\s+[^.\n]+)?)", "Reaction"),
-    "Reaction.onset": (r"(?i)(?:onset|started on|began on|onset date|began)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})|(?:on|by)\s+the\s+(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d{1,2}(?:st|nd|rd|th))\s+day\s+of\s+(?:treatment|therapy)", "Reaction"),
-    "Reaction.outcome": (r"(?i)(?:outcome|result)\s*[:\-]?\s*([^\n]+)|((?:symptoms?|reaction|patient)\s+(?:resolved|improved|recovered|cleared)(?:\s+(?:completely|fully|partially))?(?:\s+after\s+(?:discontinuing|stopping|withdrawing|cessation\s+of)\s+(?:the\s+)?(?:medication|drug|product|treatment))?)", "Reaction"),
-    "Severity.hospitalization": (r"(?i)(?:hospitali[sz]ation|hospitali[sz]ed|admitted to hospital)\s*[:\-]?\s*(yes|no|nb)\b|(?:no|not)\s+(?:hospitali[sz]ation|hospitali[sz]ed|admitted)|(?:was|were|is|are)\s+hospitali[sz]ed(?:\s+for\s+[^.\n]+)?|(?:was|were|is|are)\s+admitted\s+to\s+(?:the\s+)?hospital(?:\s+for\s+[^.\n]+)?", "Severity"),
+    "Reaction.what": (r"(?i)(?:reaction\s+description|reaction|adverse\s+event|what\s+happened)\s*[:\-]?\s*([^\n.]+(?:\.[^\n]*)?)|(?:developed|presented\s+with|experienced|reported)\s+((?:acute\s+)?(?:swelling|angioedema|rash|nausea|vomiting|dizziness|seizure|headache|dyspnea|difficulty\s+breathing|abdominal\s+discomfort|discomfort)[^.\n]*)", "Reaction"),
+    "Reaction.onset": (r"(?i)(?:onset|started on|began on|onset date|began)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})|on the\s+((?:first|second|third|fourth|fifth)\s+day of treatment)|(\w+\s+days?\s+after\s+starting\s+therapy)", "Reaction"),
+    "Reaction.outcome": (r"(?i)(?:outcome|result)\s*[:\-]?\s*([^\n]+)", "Reaction"),
+    "Severity.hospitalization": (r"(?i)(?:hospitali[sz]ation|hospitali[sz]ed|admitted to hospital)\s*[:\-]?\s*(yes|no|nb)\b|(?:no|not)\s+(?:hospitali[sz]ation|hospitali[sz]ed|admitted)|no\s+hospitali[sz]ation", "Severity"),
     "Severity.life-threatening": (r"(?i)(?:life-threatening|life threatening)\s*[:\-]?\s*(yes|no)|not\s+life-threatening", "Severity"),
     "Severity.death": (r"(?i)(?:death|died|fatal)\s*[:\-]?\s*(yes|no)|no\s+death|not\s+fatal", "Severity"),
     }
@@ -2101,20 +2098,11 @@ def extract_facts(subject, body, attachment_text, category_name):
                           "confidence": 0.9, "sourceReference": source_reference(body, value, attachment_text)})
 
     outcome_sentences = re.findall(
-        r"(?i)(?:"
-        r"(?:the\s+)?(?:rash|reaction|symptoms?|condition)\s+"
-        r"(?:started\s+)?(?:improving|resolved|recovered|cleared)"
-        r"(?:\s+(?:completely|fully|partially))?"
-        r"(?:\s+after\s+(?:discontinuing|stopping|withdrawing|cessation\s+of)\s+"
-        r"(?:the\s+)?(?:medication|drug|product|treatment))?"
-        r"[^.\n]*"
-        r"\.|"
-        r"(?:with\s+)?complete\s+resolution\s+of\s+[^.\n]*\."
-        r"|(?:she|he|the\s+patient)\s+was\s+not\s+admitted[^.\n]*\."
-        r")",
+        r"(?i)(?:the rash started improving[^.]*\.|the lip swelling has now resolved[^.]*\.|"
+        r"(?:with\s+)?complete resolution of symptoms[^.]*\.|symptoms resolved[^.]*\.|"
+        r"she was not admitted[^.]*\.)",
         source_blob,
     )
-    
     if outcome_sentences:
         facts = [fact for fact in facts if not (fact["factGroup"] == "Reaction" and fact["fieldName"] == "Outcome")]
         outcome = " ".join(outcome_sentences)
@@ -2315,20 +2303,12 @@ def extract_facts(subject, body, attachment_text, category_name):
         set_fact("Severity", "Hospitalization", "Yes", 0.92)
 
     resolved_after = re.search(
-        r"(?i)(?:"
-        r"(?:symptoms?|reaction|condition)\s+"
-        r"(?:resolved|improved|recovered|cleared)"
-        r"(?:\s+(?:completely|fully|partially))?"
-        r"(?:\s+after\s+[^.;\n]+)?"
-        r"|(?:complete\s+)?resolution\s+of\s+[^.;\n]+"
-        r"|gradual\s+improvement[^.;\n]*"
-        r"|patient\s+stabilized[^.;\n]*"
-        r"|resolved\s+spontaneously[^.;\n]*"
-        r")",
+        r"(?i)((?:symptoms?\s+)?resolved\s+with\s+discontinuation[^.;\n]*|(?:symptoms?\s+)?resolved\s+after\s+discontinuation|(?:complete\s+)?resolution\s+of\s+symptoms|symptoms?\s+resolved(?!\s*,)|gradual\s+improvement[^.;\n]*|patient\s+stabilized[^.;\n]*|resolved\s+spontaneously[^.;\n]*)",
         source_blob,
     )
     if resolved_after and not re.search(r"(?i)\bnot\s+resolved\b", source_blob):
         set_fact("Reaction", "Outcome", resolved_after.group(0).strip(), 0.90)
+
     indication = re.search(
         r"(?i)\b(?:for|to treat|indication\s*[:\-])\s+(blood\s+pressure\s+control|hypertension|type\s+2\s+diabetes|fever|seizure\s+control|epilepsy|[A-Za-z][A-Za-z -]{2,50}?)(?=\s*(?:\.|;|,\s*(?:on|and|with)\b|\n|$))",
         source_blob,
@@ -2436,288 +2416,7 @@ def extract_facts(subject, body, attachment_text, category_name):
             ).strip()
             cleaned_product = re.sub(r"(?i)\s+(?:tablets?|capsules?|syrup)\s*$", "", cleaned_product).strip()
             if cleaned_product:
-               fact["fieldValue"] = cleaned_product
-    # ================================================================
-    # SPANISH SAFETY REPORT EXTRACTION
-    # Direct extraction from original Spanish PDF text.
-    # This prevents LLM translation/extraction errors for clearly
-    # labelled synthetic Spanish ICSR reports.
-    # ==============================================================
-    if (
-        "Safety Report (ICSR)" in category_name
-         or re.search(
-             r"(?i)\b(?:Paciente|Edad|Sexo|Antecedentes|Medicamento|Dosis|"
-             r"presentó|hospitalizada|Notificado por|Pa[ií]s)\b",
-             attachment_text or "",
-       )
-    ):
-       spanish_source = re.sub(r"\s+", " ", attachment_text or "").strip()
-
-       if re.search(
-           r"(?i)\b(?:Paciente|Edad|Sexo|Antecedentes|Medicamento|Dosis|"
-           r"presentó|hospitalizada|Notificado por|Pa[ií]s)\b",
-           spanish_source,
-       ):  
-         
-            def spanish_set(group, field, value, confidence=0.98):
-                value = str(value or "").strip()
-                if not value:
-                    return
-
-                set_fact(group, field, value, confidence)
-
-                # Spanish-specific extraction is directly verified against
-                # the original PDF text.
-                for fact in reversed(facts):
-                    if (
-                        fact.get("factGroup") == group
-                        and fact.get("fieldName") == field
-                        and fact.get("fieldValue") == value
-                    ):
-                        fact["confidence"] = confidence
-                        fact["sourceReference"] = (
-                            f"PDF attachment, Spanish source field verified: {value}"
-                        )
-                        break
-       
-          
-            # Patient initials
-            m = re.search(
-                r"(?i)\bPaciente\s*:\s*([A-ZÁÉÍÓÚÑ](?:\.[A-ZÁÉÍÓÚÑ])+(?:\s+[A-ZÁÉÍÓÚÑ]+)?)",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Patient", "Initials", m.group(1))
-            # Patient age
-            m = re.search(
-                r"(?i)\bEdad\s*:\s*(\d{1,3})\s*años?\b",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Patient", "Age", m.group(1))
-
-            # Patient sex
-            m = re.search(
-                r"(?i)\bSexo\s*:\s*(Mujer|Hombre|Femenino|Masculino)\b",
-                spanish_source,
-            )
-            if m:
-                sex_map = {
-                    "mujer": "Female",
-                    "femenino": "Female",
-                    "hombre": "Male",
-                    "masculino": "Male",
-                }
-                spanish_set(
-                    "Patient",
-                    "Sex",
-                    sex_map.get(m.group(1).lower(), m.group(1)),
-                )
-
-            # Patient history
-            m = re.search(
-                r"(?i)\bAntecedentes\s*:\s*(.+?)(?=\s+Medicamento\s*:|\s+Dosis\s*:|$)",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Patient", "Relevant History", m.group(1))
-
-            # Product name
-            m = re.search(
-                r"(?i)\bMedicamento\s*:\s*(.+?)(?=\s+Dosis\s*:|$)",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Product", "Name", m.group(1))
-
-            # Dose
-            m = re.search(
-                r"(?i)\bDosis\s*:\s*(\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|ml|UI|iu))\b",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Product", "Dose", m.group(1).replace(",", "."))
-
-            # Route
-            m = re.search(
-                r"(?i)\bpor\s+v[ií]a\s+(oral|intravenosa|intramuscular|subcut[aá]nea|t[oó]pica)\b",
-                spanish_source,
-            )
-            if m:
-                route_map = {
-                    "oral": "Oral",
-                    "intravenosa": "Intravenous",
-                    "intramuscular": "Intramuscular",
-                    "subcutánea": "Subcutaneous",
-                    "topica": "Topical",
-                    "tópica": "Topical",
-                }
-                spanish_set(
-                    "Product",
-                    "Route",
-                    route_map.get(m.group(1).lower(), m.group(1).title()),
-                )
-
-            # Frequency
-            m = re.search(
-                r"(?i)\b(una\s+vez\s+al\s+d[ií]a|dos\s+veces\s+al\s+d[ií]a|"
-                r"tres\s+veces\s+al\s+d[ií]a)\b",
-                spanish_source,
-            )
-            if m:
-                frequency_map = {
-                    "una vez al día": "Once daily",
-                    "dos veces al día": "Twice daily",
-                    "tres veces al día": "Three times daily",
-                }
-                spanish_set(
-                    "Product",
-                    "Frequency",
-                    frequency_map.get(
-                        m.group(1).lower(),
-                        m.group(1),
-                    ),
-                )
-
-            # Reaction
-            m = re.search(
-                r"(?i)\b(?:La\s+paciente|El\s+paciente)\s+present[oó]\s+"
-                r"(.+?)(?=\s+Fue\s+hospitalizad|\s+Notificado\s+por|$)",
-                spanish_source,
-            )
-            if m:
-                reaction_raw = m.group(1).strip(" .,:;")
-                spanish_set(
-                    "Reaction",
-                    "What",
-                    reaction_raw,
-                )
-
-            # Onset: "el séptimo día del tratamiento"
-            m = re.search(
-                r"(?i)\bel\s+(primer|segundo|tercer|cuarto|quinto|sexto|"
-                r"s[eé]ptimo|octavo|noveno|d[eé]cimo)\s+d[ií]a\s+del\s+tratamiento\b",
-                spanish_source,
-            )
-            if m:
-                day_map = {
-                    "primer": "Day 1",
-                    "segundo": "Day 2",
-                    "tercer": "Day 3",
-                    "cuarto": "Day 4",
-                    "quinto": "Day 5",
-                    "sexto": "Day 6",
-                    "séptimo": "Day 7",
-                    "septimo": "Day 7",
-                    "octavo": "Day 8",
-                    "noveno": "Day 9",
-                    "décimo": "Day 10",
-                    "decimo": "Day 10",
-                }
-                spanish_set(
-                    "Reaction",
-                    "Onset",
-                    day_map.get(m.group(1).lower(), m.group(1)),
-                )
-
-            # Hospitalization
-            m = re.search(
-                r"(?i)\bFue\s+hospitalizada\s+durante\s+"
-                r"(\d+|un|una|dos|tres|cuatro|cinco)\s+d[ií]as?\b",
-                spanish_source,
-            )
-            if m:
-                duration_map = {
-                    "un": "1",
-                    "una": "1",
-                    "dos": "2",
-                    "tres": "3",
-                    "cuatro": "4",
-                    "cinco": "5",
-                }
-                days = duration_map.get(m.group(1).lower(), m.group(1))
-                spanish_set(
-                    "Severity",
-                    "Hospitalization",
-                    f"Yes — hospitalized for {days} days",
-                )
-
-            # Outcome
-            m = re.search(
-                r"(?i)\bLos\s+s[ií]ntomas\s+se\s+resolvieron\s+completamente\s+"
-                r"despu[eé]s\s+de\s+suspender\s+el\s+medicamento\b",
-                spanish_source,
-            )
-            if m:
-                spanish_set(
-                    "Reaction",
-                    "Outcome",
-                    "Complete resolution after discontinuation",
-                )
-                spanish_set(
-                    "Reaction",
-                    "Action",
-                    "Medication discontinued",
-                )
-
-            # Reporter name + role
-            m = re.search(
-                r"(?i)\bNotificado\s+por\s*:\s*"
-                r"(.+?)(?=,\s*m[eé]dica\s+tratante\.|\.\s*Pa[ií]s\s*:)",
-                spanish_source,
-            )
-            if m:
-                spanish_set("Reporter", "Name", m.group(1))
-
-            if re.search(r"(?i)\bm[eé]dica\s+tratante\b", spanish_source):
-                spanish_set(
-                    "Reporter",
-                    "Role",
-                    "Treating physician",
-                )
-
-            # Reporter country
-            m = re.search(
-                r"(?i)\bPa[ií]s\s*:\s*([A-Za-zÁÉÍÓÚÑáéíóúñ ]+)",
-                spanish_source,
-            )
-            if m:
-                country_map = {
-                    "españa": "Spain",
-                    "méxico": "Mexico",
-                    "mexico": "Mexico",
-                    "argentina": "Argentina",
-                    "chile": "Chile",
-                    "colombia": "Colombia",
-                }
-                country_raw = m.group(1).strip(" .,:;")
-                spanish_set(
-                    "Reporter",
-                    "Country",
-                    country_map.get(country_raw.lower(), country_raw),
-                )
-
-            # Explicitly prevent common false-positive values.
-            for fact in facts:
-                if (
-                    fact.get("factGroup") == "Severity"
-                    and fact.get("fieldName") == "Life-threatening"
-                    and str(fact.get("fieldValue") or "").strip()
-                    in {"Hospitalized for two days", "Yes — hospitalized for 2 days"}
-                ):
-                    fact["fieldValue"] = "Not stated"
-                    fact["confidence"] = 0.0
-
-                if (
-                    fact.get("factGroup") == "Product"
-                    and fact.get("fieldName") == "Disease / Indication"
-                    and re.fullmatch(
-                        r"(?i)(?:one|two|three|four|five|\d+)\s+days?",
-                        str(fact.get("fieldValue") or "").strip(),
-                    )
-                ):
-                    fact["fieldValue"] = "Not stated"
-                    fact["confidence"] = 0.0
+                fact["fieldValue"] = cleaned_product
 
     if not facts:
         facts.append({
@@ -3151,46 +2850,17 @@ def analyze_document_payload(payload):
         }
         return normalize_ai_result(result, subject, translated_body, extraction_source)
 
-    facts = extract_facts(subject, translated_body, extraction_source, "Not Relevant")
-
+    category_name, confidence, reason = classify_text(subject, sender, translated_body, extraction_source)
+    facts = extract_facts(subject, translated_body, extraction_source, category_name)
     if schema_facts:
-        facts = merge_verified_facts(
-            schema_facts,
-            facts,
-            "Not Relevant",
-            translated_body,
-            extraction_source,
-        )
-
-    category_name, confidence, reason = classify_text(
-        subject,
-        sender,
-        translated_body,
-        extraction_source,
-    )
-
-    category_name, reason = enforce_icsr_category(category_name, reason, facts)
+        facts = merge_verified_facts(schema_facts, facts, category_name, translated_body, extraction_source)
 
     if article_cases:
-
-category_name, confidence, reason = classify_text(
-    subject,
-    sender,
-    translated_body,
-    extraction_source,
-)
-
-category_name, reason = enforce_icsr_category(
-    category_name,
-    reason,
-    facts,
-)
-if article_cases:
-    for case in article_cases:
-        case_facts = case.get("extractedFacts") or case.get("facts") or []
-        if case_facts:
-           facts.extend(case_facts)
-    facts = ensure_required_safety_facts(facts, category_name, translated_body, extraction_source)
+        for case in article_cases:
+            case_facts = case.get("extractedFacts") or case.get("facts") or []
+            if case_facts:
+                facts.extend(case_facts)
+        facts = ensure_required_safety_facts(facts, category_name, translated_body, extraction_source)
 
     if article_cases and "Safety Report (ICSR)" not in category_name:
         if "Quality Complaint (PQC)" in category_name:

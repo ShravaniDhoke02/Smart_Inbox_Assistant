@@ -126,26 +126,55 @@ export class AppComponent implements OnInit, OnDestroy {
     });
   }
   select(item: any) { this.api.getMessage(item.id).subscribe(message => { this.selected = message; this.translation = ''; const pdf = (message.attachments || []).find((a: any) => (a.filename || '').toLowerCase().endsWith('.pdf')); this.pdfUrl = pdf ? this.sanitizer.bypassSecurityTrustResourceUrl(this.api.attachmentUrl(message.id, pdf.id)) : null; this.api.getAudit(message.id).subscribe(events => this.audit = events); }); }
+
   translateSelected() {
     if (!this.selected || this.translating) return;
-    const source = String(this.selected.body || '').trim();
+
+    const body = String(this.selected.body || '').trim();
+
+    const attachmentSummaries =
+      this.selected.sourceTrace?.attachmentSummaries || [];
+
+    const pdfText = attachmentSummaries
+      .map((item: any) => {
+        const filename = String(item.attachment || '').trim();
+        const text = String(item.translatedText || '').trim();
+
+        if (!text) return '';
+
+        return `[PDF: ${filename}]\n${text}`;
+      })
+      .filter((text: string) => text.length > 0)
+      .join('\n\n');
+
+    const source = [body, pdfText]
+      .filter((text: string) => text.length > 0)
+      .join('\n\n')
+      .trim();
+
     if (!source) {
       this.translation = 'No source text is available for translation.';
       return;
     }
+
     this.translating = true;
+
     this.api.translate(source).subscribe({
       next: result => {
-        this.translation = result?.translatedText || 'Translation unavailable.';
+        this.translation =
+          result?.translatedText || 'Translation unavailable.';
         this.translating = false;
       },
       error: error => {
-        this.translation = this.errorMessage(error, 'Translation unavailable.');
+        this.translation = this.errorMessage(
+          error,
+          'Translation unavailable.'
+        );
         this.translating = false;
       }
     });
-  }
-  upload(event: Event) { const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return; this.stopUploadPolling(); this.loadingUpload = true; this.loadProgress = 0; this.loadStatus = `Uploading ${file.name}...`; this.notice = ''; this.api.uploadPdf(file).subscribe({ next: result => { input.value = ''; this.loadStatus = 'Queued for AI analysis'; this.pollUploadStatus(Number(result.id)); }, error: error => { this.loadingUpload = false; this.notice = this.errorMessage(error, 'Upload failed.'); } }); }
+  } 
+ upload(event: Event) { const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return; this.stopUploadPolling(); this.loadingUpload = true; this.loadProgress = 0; this.loadStatus = `Uploading ${file.name}...`; this.notice = ''; this.api.uploadPdf(file).subscribe({ next: result => { input.value = ''; this.loadStatus = 'Queued for AI analysis'; this.pollUploadStatus(Number(result.id)); }, error: error => { this.loadingUpload = false; this.notice = this.errorMessage(error, 'Upload failed.'); } }); }
   pollUploadStatus(messageId: number) { this.api.getProcessingStatus(messageId).subscribe({ next: status => { this.loadProgress = Number(status.progress || 0); this.loadStatus = status.stage || 'Processing document...'; if (status.terminal) { this.loadingUpload = false; this.stopUploadPolling(); this.refresh(); this.notice = status.status === 'FAILED' ? 'Processing failed. Please try again.' : 'Processing complete. Results have been refreshed.'; } else { this.uploadPollTimer = window.setTimeout(() => this.pollUploadStatus(messageId), 750); } }, error: error => { this.loadingUpload = false; this.notice = this.errorMessage(error, 'Unable to retrieve processing status.'); } }); }
   stopUploadPolling() { if (this.uploadPollTimer !== undefined) { window.clearTimeout(this.uploadPollTimer); this.uploadPollTimer = undefined; } }
   loadTestData() { this.stopLoadPolling(); this.loadingTestData = true; this.loadProgress = 0; this.loadStatus = 'Queuing test documents...'; this.notice = ''; this.api.loadTestData().subscribe({ next: result => { this.loadMessageIds = (result.messageIds || []).map((id: any) => Number(id)); this.notice = `${result.created || 0} test messages queued.`; this.pollLoadStatus(); }, error: error => { this.loadingTestData = false; this.notice = this.errorMessage(error, 'Could not load test data.'); } }); }
